@@ -69,11 +69,13 @@ def test_verbose_adds_the_interpreter_and_module_path() -> None:
 
 def test_run_is_the_documented_entry_point() -> None:
     """help(sol_orchestration) in the kernel shows run()'s signature and docstring."""
-    assert asyncio.iscoroutinefunction(sol_orchestration.run)
-    assert (sol_orchestration.run.__doc__ or "").strip()
-
     import inspect
     import typing
+
+    # inspect.iscoroutinefunction, not the asyncio alias: the alias is deprecated in
+    # 3.14 and removed in 3.16, and the kernel venv tracks a recent Python.
+    assert inspect.iscoroutinefunction(sol_orchestration.run)
+    assert (sol_orchestration.run.__doc__ or "").strip()
 
     parameters = inspect.signature(sol_orchestration.run).parameters
     assert list(parameters) == ["verbose"]
