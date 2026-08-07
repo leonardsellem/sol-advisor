@@ -2,9 +2,16 @@
 
 ## Read this before editing anything here
 
-**This directory is upstream's.** The repository is a fork of `DannyMac180/sol-advisor`,
-and everything under `plugins/` and `.agents/` came from there. The Prime Agent package
-in `skills/` was built on the standing evidence that installing it changes nothing here:
+**This directory is inherited.** Everything under `plugins/` and `.agents/` came from the
+repository this one was forked from; the Prime Agent package in `skills/` was built on
+the standing evidence that installing it changes nothing here. Resolve upstream from the
+checkout rather than from a name written in a file that travels between forks:
+
+```sh
+git remote get-url upstream 2>/dev/null || echo "no upstream remote configured"
+```
+
+Before touching anything here:
 
 ```sh
 git diff origin/main -- plugins .agents    # expected: empty

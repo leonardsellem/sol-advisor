@@ -65,10 +65,17 @@ Additional Luna task-mode requirements:
 
 Add the GitHub repository as a Codex marketplace, then install the plugin:
 
+Derive the slug from the checkout rather than pasting one, so these commands stay
+correct in this repository and in any fork of it:
+
 ~~~sh
-codex plugin marketplace add DannyMac180/sol-advisor --ref main
+repo=$(git remote get-url origin | sed -E 's#^(git@|ssh://git@|https://)github\.com[:/]##; s#\.git$##')
+codex plugin marketplace add "$repo" --ref main
 codex plugin add sol-advisor@sol-advisor
 ~~~
+
+Use `origin`, not `gh repo view`: for a fork, `gh` resolves to the **parent** repository,
+so `gh repo view --json nameWithOwner` would hand you upstream's slug rather than yours.
 
 ### Install the native companion custom agents (native mode only)
 
@@ -274,8 +281,11 @@ token cost, and each delegation appends one **episode record** so model choice c
 be fitted to evidence instead of intuition.
 
 ~~~sh
-prime-agent package install git:github.com/leonardsellem/sol-advisor
+repo=$(git remote get-url origin | sed -E 's#^(git@|ssh://git@|https://)github\.com[:/]##; s#\.git$##')
+prime-agent package install "git:github.com/$repo"
 ~~~
+
+Or, from a checkout, skip the slug entirely: `prime-agent package install "$PWD"`.
 
 Installing it modifies neither the Codex plugin above nor the marketplace manifest.
 
@@ -316,7 +326,8 @@ Everything lives under one directory the package owns:
 ~~~
 
 ~~~sh
-prime-agent package remove git:github.com/leonardsellem/sol-advisor
+repo=$(git remote get-url origin | sed -E 's#^(git@|ssh://git@|https://)github\.com[:/]##; s#\.git$##')
+prime-agent package remove "git:github.com/$repo"
 ~/.prime/agent/kernel-venv/bin/python -m pip uninstall -y sol-orchestration
 rm -rf ~/.prime/agent/sol-orchestration          # deletes the episode corpus
 ~~~
