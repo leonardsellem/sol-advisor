@@ -34,6 +34,34 @@ If the Codex plugin verifier fails for a reason you did not cause, file it as it
 issue and fix it in its own PR. Folding that fix into a feature PR destroys the
 byte-identity that PR asserts.
 
+## Never put a loose `.md` in the skills root
+
+`skills/` is a declared skill root. Prime Agent discovers **direct root `.md` files as
+individual skills** there, and directories containing `SKILL.md` recursively — so a
+`README.md` or `AGENTS.md` sitting directly in `skills/` is loaded as a malformed skill
+and warns on every session start:
+
+```
+[Skill warnings]
+  .../skills/AGENTS.md
+    description is required
+```
+
+Documentation for the skills root belongs here, in this file. Documentation *inside* a
+skill directory is fine — `skills/sol-orchestration/README.md` is never scanned, because
+only the root level is treated that way.
+
+`scripts/verify-prime-agent-package.sh` fails the build on any loose markdown in a
+declared skill root. That check exists because this repository shipped exactly that
+mistake once, and nothing caught it until a real install printed the warning.
+
+### What is in the skills root
+
+`sol-orchestration/` — the Python-backed capability package. Adding another skill means
+three names must agree or it silently degrades to markdown: the directory name, the
+`name:` in its `SKILL.md` frontmatter, and the Python import identifier (hyphens become
+underscores). It also widens the root footprint below; decide to, rather than drift.
+
 ## Root footprint is three paths
 
 `package.json`, `skills/`, `scripts/`. That was an explicit, costed decision — a fork's
