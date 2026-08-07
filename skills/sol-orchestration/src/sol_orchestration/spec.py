@@ -86,7 +86,7 @@ def signal_path(delegation_id: str) -> Path:
 
 
 def write_signal(delegation_id: str, payload: dict) -> Path:
-    """Write a completion signal. Used by tests and by the manual procedure."""
+    """Write a completion signal. Used by tests and by the unrecorded recovery discipline."""
     path = signal_path(delegation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")

@@ -157,42 +157,44 @@ def test_effort_below_the_floor_asks_the_operator_to_raise_it(
     assert "/effort" in raised.value.remedy
 
 
-def test_a_session_producing_non_retained_children_is_refused(
+def test_non_retained_children_degrade_to_restart_only_corrections(
     agent_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only a retained child can receive a correction; assert it or corrections are fiction."""
+    """The lifecycle already restarts a correction on the same model when retention is absent."""
     seed(agent_home, WELL_FORMED)
     at_effort(monkeypatch, agent_home, "high")
     at_verified_runtime(agent_home)
     host = RecordingHost(catalog=tuple(WELL_FORMED["allowlist"]), subagents=(child(active_session_id=None),))
-    with pytest.raises(contract.Refusal) as raised:
-        asyncio.run(preflight.run(host))
-    assert "retain" in raised.value.remedy.lower() or "daemon" in raised.value.remedy.lower()
+    report = asyncio.run(preflight.run(host))
+    assert contract.RESTART_ONLY_CORRECTIONS in {entry.kind for entry in report.degradations}
+    assert report.retention.retained_children == 0
 
 
-def test_an_unreachable_agent_message_request_refuses_with_a_named_remedy(
+def test_an_unreachable_agent_message_request_degrades_to_restart_only_corrections(
     agent_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Trace regression: missing agent_message must not force raw, unrecorded spawning."""
     seed(agent_home, WELL_FORMED)
     at_effort(monkeypatch, agent_home, "high")
     at_verified_runtime(agent_home)
     host = RecordingHost(catalog=tuple(WELL_FORMED["allowlist"])).without_roster()
-    with pytest.raises(contract.Refusal) as raised:
-        asyncio.run(preflight.run(host))
-    assert "agent-message" in raised.value.artifact
-    assert raised.value.remedy
+    report = asyncio.run(preflight.run(host))
+    assert report.surviving == tuple(WELL_FORMED["allowlist"])
+    assert report.retention.roster_reachable is False
+    assert contract.RESTART_ONLY_CORRECTIONS in {entry.kind for entry in report.degradations}
 
 
-def test_an_unreachable_observation_request_refuses_with_a_named_remedy(
+def test_preflight_does_not_probe_the_unused_agent_observe_host_request(
     agent_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Collection observes the signal and RLM registry; agent_observe is not a dependency."""
     seed(agent_home, WELL_FORMED)
     at_effort(monkeypatch, agent_home, "high")
     at_verified_runtime(agent_home)
     host = RecordingHost(catalog=tuple(WELL_FORMED["allowlist"]), observe=False)
-    with pytest.raises(contract.Refusal) as raised:
-        asyncio.run(preflight.run(host))
-    assert "agent-observe" in raised.value.artifact
+    report = asyncio.run(preflight.run(host))
+    assert report.surviving == tuple(WELL_FORMED["allowlist"])
+    assert all(request_type != "agent_observe.list" for request_type, _ in host.requests)
 
 
 # --- degradations -------------------------------------------------------------
@@ -284,10 +286,10 @@ def test_xhigh_clears_the_floor_and_medium_does_not() -> None:
     assert not preflight.clears_floor("off")
 
 
-def test_retention_evidence_says_when_it_was_only_inferred(
+def test_retention_evidence_does_not_claim_an_unobserved_child(
     agent_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With no children yet, roster reachability is the evidence — say so, don't claim more."""
+    """An agent-message roster is not proof that a future child will be retained."""
     seed(agent_home, WELL_FORMED)
     at_effort(monkeypatch, agent_home, "high")
     at_verified_runtime(agent_home)
@@ -295,6 +297,7 @@ def test_retention_evidence_says_when_it_was_only_inferred(
     assert report.retention.observed_children == 0
     assert report.retention.retained_children == 0
     assert report.retention.roster_reachable is True
+    assert report.retention.proven_by_observation is False
 
 
 # --- the parent's own model is always spawnable -------------------------------

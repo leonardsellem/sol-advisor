@@ -71,3 +71,12 @@ def test_no_module_level_import_of_the_kernel_runtime() -> None:
             assert sol_orchestration.RUNTIME_MODULE not in roots, (
                 f"{module} imports the kernel runtime at module level"
             )
+
+
+def test_manual_recovery_is_honest_about_the_missing_episode_and_host_bridge() -> None:
+    """Raw spawning cannot impersonate the package lifecycle that the trace bypassed."""
+    skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    assert "unrecorded-manual-delegation" in skill
+    assert "does not produce a valid episode" in skill
+    assert "Do not start a nested `prime-agent` process" in skill
+    assert "runnable by hand, with no Python module and no runtime" not in skill

@@ -1,6 +1,6 @@
 ---
 name: sol-orchestration
-description: "Cost-routed delegation for Prime Agent. Use when a task is large enough to split across delegated workers: the orchestrator keeps decomposition, specification, and acceptance, each child owns exactly one file set, and every boundary returns ship, fix-first, rethink, or abandon. Includes a manual procedure that runs without the Python module."
+description: "Cost-routed delegation for Prime Agent. Use when a task is large enough to split across delegated workers: the orchestrator keeps decomposition, specification, and acceptance, each child owns exactly one file set, and every boundary returns ship, fix-first, rethink, or abandon. Includes an explicitly unrecorded recovery discipline when the Python package cannot run."
 ---
 
 # Sol Orchestration
@@ -10,10 +10,11 @@ specification, and the acceptance decision. Children own implementation inside t
 boundary you gave them, and nothing else.
 
 Preflight, routing, the delegation lifecycle, evidence collection, packet assembly and
-the episode corpus are all implemented. This document carries the whole contract
-regardless of whether the Python loads. Everything below is runnable by hand today, and the manual procedure is
-not a fallback of last resort: it is the procedure, with the Python call as a
-convenience on top.
+the episode corpus are implemented in the Python package. That path is authoritative
+for a recorded orchestration run. This document also preserves the boundary discipline
+when Python cannot load, but raw spawning cannot reproduce the two-phase ledger, cost
+attribution, or packet guarantees: recovery work must be labelled
+`unrecorded-manual-delegation` and does not produce a valid episode.
 
 ## Check the environment first
 
@@ -27,21 +28,26 @@ Or with the interpreter and module path included:
 
 The report names the resolved Prime Agent home, the resolved kernel venv, the
 variable that decided each, whether the environment is isolated from the operator's
-real installation, and whether the bundled runtime is reachable.
+real installation, and whether the bundled runtime module imports. Importability is
+not proof that delegation works; only `await sol_orchestration.preflight.run()` verifies
+the host capabilities needed by this package.
 
 ### If the module is not there
 
 Prime Agent binds a placeholder that raises `RuntimeError` when a Python skill fails
 to import, and it installs nothing at all when `PRIME_AGENT_KERNEL_PYTHON` is set.
-Both are **degradations, not failures** — say so out loud and keep going:
+Both are **degradations, not silent permission to impersonate the package**:
 
-1. Report the degradation to the user in plain words: the Python module did not load,
-   the environment check is unavailable, and orchestration continues manually.
+1. Report in plain words that the Python package did not load and no valid episode can
+   be produced on this path.
 2. Do not reinstall, rebuild the venv, or route around it silently.
-3. Run the manual procedure below. It needs nothing from the module.
+3. If the user still wants delegation, follow the recovery discipline below and label
+   every boundary `unrecorded-manual-delegation`. Otherwise continue locally.
 
-If the module loads but the runtime does not, `run()` says `runtime: degraded` and
-names the import error rather than raising. Same three steps.
+If the module loads but the runtime does not, `run()` says the module is unavailable
+and names the import error rather than raising. Do not start a nested `prime-agent`
+process from IPython to compensate: a nested CLI process does not inherit the parent
+session's host bridge or episode lifecycle.
 
 ## Declare the allowlist before anything else
 
@@ -87,16 +93,17 @@ It **refuses** when:
   session's own model — that model is the expensive orchestrator.
 - The session's reasoning effort is below `high`. Nothing in the kernel can change
   the level, so it asks you to raise it with `/effort high` rather than pretending to.
-- This session's children would not be retained. Only a retained child can receive a
-  correction, so a session whose children carry no active session id is refused now
-  rather than at correction time, after the child has been paid for.
-- The agent-message or agent-observe host requests are unreachable. Correction
-  delivery and child observation both route through them.
+- The RLM child registry is unreachable. Collection uses that registry for child
+  state and the file signal for completion; it does not use `agent_observe`.
 
 It **degrades and continues** when the effort level cannot be read, when some entries
-were dropped, or when the runtime is not the version these contracts were verified
-against. A routine patch bump must not halt the dataset. Every degradation is carried
-in `report.degradations` and belongs in whatever you report afterwards.
+were dropped, when the runtime is not the version these contracts were verified
+against, or when direct correction is unavailable. If `agent_message` cannot be
+reached or live children are not retained, corrections use the lifecycle's existing
+fallback: a new linked delegation on the same model, recorded as
+`restart-only-corrections`. A routine patch bump or an optional messaging channel must
+not force raw spawning outside the episode ledger. Every degradation is carried in
+`report.degradations` and belongs in the packet and terminal episode detail.
 
 ### Your own model is always spawnable — others may not be
 
@@ -140,10 +147,14 @@ same event as choosing among one.
 
 ### Doing this by hand
 
-With no Python: read the config file yourself, run `prime-agent model list` and drop
-every declared entry that does not appear in it verbatim, confirm `/effort` is at
-`high` or above, then apply the prior's rules in order against what survived. Refuse
-in exactly the cases listed above rather than substituting a model.
+This is availability triage, not a substitute for package preflight. In the active
+kernel, query each exact selector with `await rlm.find_models(selector, 20)` and retain
+only exact matches, except that the parent's exact selector is spawnable through the
+host's parent-model path. Do not infer executable availability from
+`prime-agent model list`: the static list can contain models the authenticated RLM
+catalog will refuse. Confirm `/effort` is at `high` or above, then apply the prior's
+rules in order. If `rlm` itself is unavailable, there is no in-session delegation
+path; do not launch a nested CLI and pretend it shares this session.
 
 ## Dispatch and collect are two separate turns
 
@@ -190,9 +201,10 @@ closed as `abandon`, with its record written and a timeout degradation recorded.
 A correction can only reach a child that is still retained and addressable. When the
 child is gone, the correction opens a **new linked delegation id on the same model**,
 marked restarted-context — and the original's correction count does **not** move,
-because a restarted context is not another round against the same child. Confusing the
-two would make a model that recovered in one round look identical to one that needed
-four.
+because a restarted context is not another round against the same child. The original
+also records `restart-only-corrections`, even if the channel failed after preflight,
+so the runtime fallback cannot disappear from the episode. Confusing the two would
+make a model that recovered in one round look identical to one that needed four.
 
 The `fix-first` loop is capped. At the cap `correct` refuses and returns
 `forced_rethink`, which means the specification is wrong rather than the execution.
@@ -201,12 +213,14 @@ a stop.
 
 ### Doing this by hand
 
-Spawn with `await rlm.run(prompt, name=..., model=...)` passing **exactly** those two
-keyword arguments and never omitting `model`. Poll the signal path yourself rather
-than reading the child's reply. Deliver a correction with
-`await agent_message.send(text, receiver_role="child", receiver_name=<the child's name>)`,
-and if that raises, treat the child as gone and start a fresh delegation on the same
-model rather than picking a different one.
+This is an `unrecorded-manual-delegation`, not a package episode. Spawn through the
+active session's native RLM callable with an explicit `name` and exact `model`; never
+omit `model`. Poll the signal path yourself rather than treating the child's reply as
+evidence. Deliver a correction through the active session's agent-message capability,
+and if that is unavailable, start a fresh child on the same model. Record in your user
+report that token cost, correction linkage, and terminal outcome were not appended to
+the package corpus. Do not start a nested `prime-agent` process: it cannot provide the
+parent kernel's host bridge or repair the missing record.
 
 ## Collect evidence in the kernel, for nothing
 
@@ -331,11 +345,13 @@ zero exit the log is the least load-bearing thing in the packet and is cut first
 Every cut is marked inline and recorded as a degradation. If you see the truncation
 mark, you are judging a fragment — ask for more rather than concluding from it.
 
-## Every delegation leaves exactly one episode
+## Every package-managed delegation leaves exactly one episode
 
-The episode corpus is what this whole package is for. Everything else exists so a
-later plan can fit a routing policy against real evidence instead of intuition, and a
-record that is missing, collapsed, or confounded cannot be backfilled — the delegation
+A raw `unrecorded-manual-delegation` is outside this guarantee and must never be
+counted as corpus evidence. The episode corpus is what this whole package is for.
+Everything else exists so a later plan can fit a routing policy against real evidence
+instead of intuition. A record that is missing, collapsed, or confounded cannot be
+backfilled — the delegation
 it described is gone.
 
     book = ledger.Ledger()
@@ -446,9 +462,13 @@ A child's report is a claim. Before any outcome other than `abandon`:
 4. Compare what you observed against the objective, the interfaces, and the
    constraints you set.
 
-## Manual procedure
+## Unrecorded recovery discipline
 
-Runnable by hand, with no Python module and no runtime.
+Use this only when the Python capability path cannot run and delegation is still worth
+doing. It preserves ownership and acceptance discipline, but it does not produce a
+valid episode. Prefix each recorded boundary note with
+`unrecorded-manual-delegation`; never add it to the episode corpus later as if the
+missing evidence could be reconstructed.
 
 1. **State the objective** in one sentence, and the acceptance test that proves it.
 2. **Decompose** into children. For each child write down: the one file set it owns,
@@ -460,8 +480,9 @@ Runnable by hand, with no Python module and no runtime.
    child its complete specification — a fresh worker inherits none of your context.
 5. **Verify** with step 4 of the contract above: real diff, in-scope only, commands
    rerun by you.
-6. **Close the boundary** with `ship`, `fix-first`, `rethink`, or `abandon`, and
-   record which one and why.
+6. **Close the boundary note** with `ship`, `fix-first`, `rethink`, or `abandon`,
+   prefixed by `unrecorded-manual-delegation`, and state that no package episode or
+   attributable cost record exists.
 7. **Repeat** until every child is closed, then re-run the acceptance test from step 1
    against the whole objective — not against the last child.
 

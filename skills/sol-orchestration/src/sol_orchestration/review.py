@@ -68,7 +68,7 @@ def findings_path(delegation_id: str) -> Path:
 
 
 def write_findings(delegation_id: str, payload: dict[str, Any]) -> Path:
-    """Write a findings file. Used by tests and by the manual procedure."""
+    """Write a findings file. Used by tests and by the unrecorded recovery discipline."""
     path = findings_path(delegation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")

@@ -15,11 +15,12 @@ Four checks, and the refuse/degrade split is deliberate in each:
   read is the session transcript's latest level-change entry. Below the floor is a
   refusal that asks the operator to raise it, because nothing in the kernel can. An
   unreadable transcript is a degradation, not a refusal.
-* **Retention** — only a retained child can receive a correction. The host populates
-  a child's active session id solely for daemon-backed children, and the bundled
-  agent-message skill addresses a child only when that id is present. Asserting it
-  here is what stops the correction path from being unimplementable later while its
-  tests still pass.
+* **Correction mode** — a retained child with agent messaging can be corrected in
+  place. When either capability is absent the lifecycle's existing fallback opens a
+  new linked delegation on the same model. Preflight records that costlier restart-only
+  mode as a degradation; it does not force callers into raw spawning that would bypass
+  the episode ledger. ``agent_observe`` is not probed because collection uses the RLM
+  registry and the file signal, never that host request.
 * **Runtime version** — every contract this package depends on was read from one
   version's source, so a change is a re-verification trigger. It is a degradation
   rather than a refusal: the deliverable is the corpus, and freezing it on a routine
@@ -37,6 +38,7 @@ from . import config as config_module
 from . import home
 from .contract import (
     ALLOWLIST_ENTRIES_DROPPED,
+    RESTART_ONLY_CORRECTIONS,
     UNREADABLE_EFFORT,
     UNRECOGNIZED_RUNTIME_VERSION,
     Degradation,
@@ -58,9 +60,8 @@ EFFORT_LEVELS = ("off", "low", "medium", "high", "xhigh")
 #: it cannot be quietly lowered to make a run cheaper.
 EFFORT_FLOOR = "high"
 
-#: Host requests correction delivery and child observation route through.
+#: The optional direct-correction channel. Collection itself does not depend on it.
 AGENT_MESSAGE_ROSTER_REQUEST = "agent_message.list_agents"
-AGENT_OBSERVE_LIST_REQUEST = "agent_observe.list"
 
 
 @dataclass(frozen=True)
@@ -93,9 +94,9 @@ class DroppedEntry:
 class RetentionEvidence:
     """What was actually observed about child retention, rather than what was hoped.
 
-    With no children spawned yet there is nothing to observe directly, and roster
-    reachability is the whole of the evidence. Saying which of the two happened keeps
-    the claim honest instead of implying a spawn was inspected when none existed.
+    ``roster_reachable`` records the optional agent-message channel; it is not proof
+    that a future child will be retained. The child counts are observation only, so a
+    preflight with no live children makes no retention claim it did not measure.
     """
 
     roster_reachable: bool
@@ -323,55 +324,43 @@ def _runtime_degradation(observed: RuntimeFingerprint) -> Degradation | None:
     )
 
 
-async def assert_host_requests_reachable(host: Host) -> None:
-    """Refuse when correction delivery or child observation is unavailable.
+async def correction_channel_reporting(host: Host) -> tuple[bool, str | None]:
+    """Report whether in-place correction is reachable, without making it a gate.
 
-    Both are runtime dependencies rather than conveniences: without the roster a
-    correction cannot be addressed to a child, and without observation a child's state
-    cannot be read. Discovering either at correction time means having already paid
-    for the child.
+    ``Lifecycle.correct`` already falls back to a new linked delegation on the same
+    selector when messaging is absent. Refusing here made that implemented fallback
+    unreachable and pushed the failing trace into raw spawns with no episode record.
     """
     try:
         await host.request(AGENT_MESSAGE_ROSTER_REQUEST)
     except Exception as error:
-        raise Refusal(
-            artifact=f"the agent-message host request ({AGENT_MESSAGE_ROSTER_REQUEST})",
-            remedy="run this session with the agent-message built-in skill enabled and a reachable "
-            f"daemon; the host reported: {error}",
-        ) from error
+        return False, (
+            f"{AGENT_MESSAGE_ROSTER_REQUEST} is unavailable "
+            f"({type(error).__name__}); host error text omitted from the persistent corpus"
+        )
+    return True, None
 
+
+async def read_retention(host: Host, *, roster_reachable: bool) -> RetentionEvidence:
+    """Observe live RLM children and whether direct correction could address them.
+
+    The RLM registry is the lifecycle's actual child-state source. A missing active
+    session id no longer refuses the whole run: correction restarts on the same model
+    under a new linked delegation id, and preflight records that mode as a degradation.
+    """
     try:
-        await host.request(AGENT_OBSERVE_LIST_REQUEST)
+        subagents: tuple[Subagent, ...] = await host.list_subagents()
     except Exception as error:
         raise Refusal(
-            artifact=f"the agent-observe host request ({AGENT_OBSERVE_LIST_REQUEST})",
-            remedy="run this session with the agent-observe built-in skill enabled; the host "
-            f"reported: {error}",
+            artifact="the RLM subagent registry (rlm.list_subagents)",
+            remedy="run this session where the RLM child registry is reachable; it is the "
+            f"state source used by bounded collection and correction. The host reported: {error}",
         ) from error
 
-
-async def assert_children_are_retained(host: Host) -> RetentionEvidence:
-    """Refuse when this session's children could not receive a correction.
-
-    Whether a child is retained is a property of how the parent session runs, not an
-    option the spawn accepts — it takes only a name and a model. The host fills in a
-    child's active session id solely for daemon-backed children, and that id is what
-    the agent-message roster addresses.
-    """
-    subagents: tuple[Subagent, ...] = await host.list_subagents()
     live = tuple(entry for entry in subagents if entry.status == "running")
     retained = tuple(entry for entry in live if entry.active_session_id)
-
-    if live and not retained:
-        raise Refusal(
-            artifact="this session's run mode",
-            remedy="run the orchestrator daemon-backed so its children are retained and carry an "
-            "active session id; children of a non-retained session cannot be addressed, so a "
-            "correction could never reach one",
-        )
-
     return RetentionEvidence(
-        roster_reachable=True,
+        roster_reachable=roster_reachable,
         observed_children=len(live),
         retained_children=len(retained),
     )
@@ -416,8 +405,24 @@ async def run(host: Host | None = None, config_path: Path | None = None) -> Pref
             "code can change the level, so only the operator can clear this",
         )
 
-    await assert_host_requests_reachable(host)
-    retention = await assert_children_are_retained(host)
+    roster_reachable, correction_channel_problem = await correction_channel_reporting(host)
+    retention = await read_retention(host, roster_reachable=roster_reachable)
+    restart_only_reasons: list[str] = []
+    if correction_channel_problem is not None:
+        restart_only_reasons.append(correction_channel_problem)
+    if retention.observed_children > retention.retained_children:
+        restart_only_reasons.append(
+            f"{retention.observed_children - retention.retained_children} live child(ren) "
+            "carry no active session id"
+        )
+    if restart_only_reasons:
+        degradations.append(
+            Degradation(
+                kind=RESTART_ONLY_CORRECTIONS,
+                detail="; ".join(restart_only_reasons)
+                + " — corrections will open linked delegations on the same model",
+            )
+        )
 
     surviving, dropped = await resolve_availability(declared.allowlist, host)
     if dropped:

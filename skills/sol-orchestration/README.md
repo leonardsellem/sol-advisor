@@ -15,12 +15,12 @@ That corpus is the point. Everything else exists to produce it honestly.
 
 | File | Audience |
 |---|---|
-| [`SKILL.md`](SKILL.md) | The workflow. Stands alone and is runnable by hand with no Python and no runtime. |
-| `src/sol_orchestration/` | The same workflow's deterministic parts, as callables the kernel runs for free. |
+| [`SKILL.md`](SKILL.md) | The workflow contract plus an explicitly unrecorded recovery discipline. |
+| `src/sol_orchestration/` | The authoritative recorded lifecycle and its deterministic callables. |
 
-The manual procedure is not a fallback of last resort — it is the procedure, with the
-Python call as a convenience on top. A failed Python load is reported to you and the
-workflow continues.
+A failed Python load is reported rather than hidden. Raw recovery may preserve the
+ownership and acceptance rules, but it cannot reproduce the episode ledger or cost
+attribution and must never be reported as a valid package episode.
 
 ## Before first use
 

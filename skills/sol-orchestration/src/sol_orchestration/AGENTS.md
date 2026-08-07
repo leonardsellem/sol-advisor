@@ -14,7 +14,7 @@ The kernel-side callables. Import direction runs one way: `contract` → `config
 | `home.py` | Mistaking a redirected home for a redirected kernel venv |
 | `config.py` | A default model reaching production by being the value nobody edits |
 | `host.py` | A spawn without a selector inheriting the parent's expensive model |
-| `preflight.py` | Paying for a delegation that could never be corrected |
+| `preflight.py` | Confusing optional direct messaging with the recorded same-model restart path |
 | `routing.py` | Routing on a guessed feature, or falling back to the session's model |
 | `spec.py` | A child reporting completion through the orchestrator's context |
 | `lifecycle.py` | A crashed delegation leaving no record |

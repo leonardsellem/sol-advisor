@@ -12,10 +12,10 @@ delegation it described is gone. Weigh changes here against that.
 
 ## Two faces, both authoritative
 
-`SKILL.md` is not documentation of the Python. It is the contract, and it must stay
-runnable by hand with no module and no runtime. **When you change behaviour, change
-`SKILL.md` in the same commit.** A stale manual path is worse than none, because it is
-the declared fallback when the Python fails to load.
+`SKILL.md` is not merely documentation of the Python. It is the workflow contract,
+and its recovery path must state honestly which corpus guarantees disappear without
+the package. **When you change behaviour, change `SKILL.md` in the same commit.** A
+recovery path that implies raw spawns created valid episodes is worse than none.
 
 ## Commands
 
