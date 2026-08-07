@@ -1,0 +1,15 @@
+{
+  "name": "sol-advisor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prime Agent capability package: the sol-orchestration skill for cost-routed delegation.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  }
+}
