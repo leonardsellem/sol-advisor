@@ -410,3 +410,62 @@ def test_the_evidence_module_makes_no_host_request_at_all() -> None:
     source = Path(evidence.__file__).read_text(encoding="utf-8")
     for forbidden in ("host_request", "find_models", "self.host", "import rlm", "spawn("):
         assert forbidden not in source, f"evidence.py reaches the host via {forbidden}"
+
+
+# --- what the live smoke run taught us about build artifacts -------------------
+
+
+def test_build_artifacts_are_reported_but_are_not_ownership_violations(
+    repo: Path, declared
+) -> None:
+    """Running the tests creates __pycache__, which is not the child going out of bounds.
+
+    The first real delegation came back fix-first solely because pytest had written
+    src/__pycache__/ and tests/__pycache__/ outside the declared ownership set. Counting
+    those would make every Python delegation an ownership violation and train the
+    operator to ignore the signal that actually matters.
+    """
+    snapshot = evidence.snapshot(repo, declared)
+    (repo / "src" / "fetch.py").write_text("x = 1\n", encoding="utf-8")
+    for directory in ("src", "tests"):
+        cache = repo / directory / "__pycache__"
+        cache.mkdir()
+        (cache / "mod.cpython-311.pyc").write_bytes(b"\x00compiled")
+
+    result = collect(repo, snapshot, ("src/fetch.py",), declared)
+
+    assert result.ownership_violations == (), "a build artifact was reported as going out of bounds"
+    assert result.build_artifacts, "build artifacts were dropped from the delta entirely"
+    assert any("__pycache__" in path for path in result.build_artifacts)
+    # Reported, never hidden: still in the delta, because a poisoned .pyc is importable.
+    assert any("__pycache__" in path for path in result.changed_paths)
+
+
+def test_a_real_file_outside_the_set_is_still_a_violation_alongside_artifacts(
+    repo: Path, declared
+) -> None:
+    """The artifact carve-out must not become a hiding place for real out-of-bounds work."""
+    snapshot = evidence.snapshot(repo, declared)
+    cache = repo / "src" / "__pycache__"
+    cache.mkdir()
+    (cache / "mod.cpython-311.pyc").write_bytes(b"\x00")
+    (repo / "src" / "elsewhere.py").write_text("sneaky = 1\n", encoding="utf-8")
+
+    result = collect(repo, snapshot, ("src/fetch.py",), declared)
+    assert result.ownership_violations == ("src/elsewhere.py",)
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("src/__pycache__/a.pyc", True),
+        ("__pycache__/a.pyc", True),
+        (".pytest_cache/v/cache/lastfailed", True),
+        ("node_modules/left-pad/index.js", True),
+        ("src/pycache_impostor/a.py", False),
+        ("src/adder.py", False),
+        ("tests/test_adder.py", False),
+    ],
+)
+def test_build_artifact_classification(path: str, expected: bool) -> None:
+    assert evidence.is_build_artifact(path) is expected

@@ -24,6 +24,7 @@ FENCE_NONCE = "0123456789abcdef"
 def an_evidence(**overrides) -> evidence.Evidence:
     fields = {
         "changed_paths": ("src/fetch.py",),
+        "build_artifacts": (),
         "pre_existing_changes": (),
         "ownership_violations": (),
         "integrity_failures": (),

@@ -297,3 +297,50 @@ def test_a_normal_record_is_not_marked_restarted(agent_home: Path) -> None:
     )
     assert opened["restarted_from"] is None
     assert opened["restarted_context"] is False
+
+
+# --- what the live smoke run taught us about where a child's transcript lives ---
+
+
+def test_a_childs_transcript_is_found_under_its_own_session_dir(agent_home: Path) -> None:
+    """A child's transcript is NOT in <home>/sessions/. The live smoke run proved it.
+
+    The runtime nests it under the parent's artifact directory, as
+    <home>/session-artifacts/<parent-id>/sub-<child-id>/<child-session-id>.jsonl. The
+    first real delegation recorded its cost as unreadable purely because this resolved
+    to the root-session layout — a defect no fixture caught, because every fixture
+    wrote the transcript where the code already looked.
+    """
+    child_session_id = "019fdd1e-5ead-779c-a84a-1ebc8f4168a0"
+    child_dir = agent_home / "session-artifacts" / "019fdd1e-parent" / "sub-b9dca848"
+    child_dir.mkdir(parents=True)
+    (child_dir / f"{child_session_id}.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "thinking_level_change", "thinkingLevel": "high"}),
+                json.dumps(assistant(140, 2835, 0.046319)),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # Without the session dir it is not findable, and that is reported honestly.
+    usage, degradation = episodes.read_usage(child_session_id)
+    assert usage is None
+    assert degradation.kind == contract.UNREADABLE_COST
+
+    # With it, the real numbers come back.
+    usage, degradation = episodes.read_usage(child_session_id, session_dir=child_dir)
+    assert degradation is None
+    assert usage.input_tokens == 140
+    assert usage.output_tokens == 2835
+    assert usage.cost_total == pytest.approx(0.046319)
+    assert episodes.read_clamped_effort(child_session_id, session_dir=child_dir) == "high"
+
+
+def test_a_root_session_transcript_still_resolves_without_a_session_dir(agent_home: Path) -> None:
+    write_transcript(agent_home, "root-1", [assistant(10, 20, 0.001)])
+    usage, degradation = episodes.read_usage("root-1")
+    assert degradation is None
+    assert usage.total_tokens == 30
