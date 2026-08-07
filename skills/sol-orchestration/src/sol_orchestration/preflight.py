@@ -237,6 +237,19 @@ def read_effort(entries: list[dict], unreadable: str | None) -> tuple[str | None
     )
 
 
+def current_effort() -> str | None:
+    """Return the effort level in force right now, or ``None`` when unreadable.
+
+    Read at the moment it is asked for. The operator can move the dial mid-session, so
+    a level captured earlier and carried forward would record a condition that was not
+    actually in force when the spawn happened — which is exactly the confounder the
+    episode's effort field exists to remove.
+    """
+    entries, unreadable = _read_transcript_entries(session_transcript_path())
+    level, _ = read_effort(entries, unreadable)
+    return level
+
+
 def read_runtime_fingerprint(entries: list[dict]) -> RuntimeFingerprint:
     """Read the two versioned contracts this package depends on directly."""
     session_record_version: int | None = None
