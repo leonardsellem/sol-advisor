@@ -1,3 +1,6 @@
 .DS_Store
 *.log
 __pycache__/
+
+# Local planning artifacts — not part of the upstream-facing package
+docs/
