@@ -286,3 +286,48 @@ def test_closing_removes_the_signal_file_so_the_next_delegation_starts_clean(
     assert spec_module.signal_path(delegation.delegation_id).exists()
     asyncio.run(engine.close(delegation, "ship"))
     assert not spec_module.signal_path(delegation.delegation_id).exists()
+
+
+def test_close_threads_caller_supplied_detail_into_the_record(declared: config.Config) -> None:
+    """Without this the cost term never reaches the corpus.
+
+    The lifecycle does not read transcripts — that is the episode layer's job — so the
+    caller is the only one holding the child's usage and clamped effort at close time.
+    Found by the live smoke run, which would otherwise have produced the epic's first
+    real episode with no cost on it at all.
+    """
+    engine, _, recorder, _, _ = build(declared)
+    delegation = asyncio.run(engine.dispatch(a_spec(), selector=ROUTED, surviving=SURVIVING))
+    asyncio.run(
+        engine.close(
+            delegation,
+            "ship",
+            {
+                "child_session_id": "sess-child-1",
+                "child_effort_clamped": "high",
+                "usage": {"total_tokens": 1234},
+            },
+        )
+    )
+    closed = [payload for kind, _, payload in recorder.events if kind == "close"][0]
+    assert closed["child_session_id"] == "sess-child-1"
+    assert closed["child_effort_clamped"] == "high"
+    assert closed["usage"] == {"total_tokens": 1234}
+    assert closed["selector"] == ROUTED, "caller detail overwrote a lifecycle-owned field"
+
+
+def test_caller_degradations_are_merged_with_the_lifecycles_own(declared: config.Config) -> None:
+    engine, host, recorder, _, _ = build(declared)
+    delegation = asyncio.run(engine.dispatch(a_spec(), selector=ROUTED, surviving=SURVIVING))
+    delegation.degradations.append(
+        contract.Degradation(kind=contract.CHILD_TIMEOUT, detail="from the lifecycle")
+    )
+    asyncio.run(
+        engine.close(
+            delegation, "abandon",
+            {"degradations": [{"kind": contract.UNREADABLE_COST, "detail": "from the caller"}]},
+        )
+    )
+    closed = [payload for kind, _, payload in recorder.events if kind == "close"][0]
+    kinds = {entry["kind"] for entry in closed["degradations"]}
+    assert kinds == {contract.CHILD_TIMEOUT, contract.UNREADABLE_COST}

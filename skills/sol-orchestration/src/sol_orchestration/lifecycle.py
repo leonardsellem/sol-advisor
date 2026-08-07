@@ -355,8 +355,19 @@ class Lifecycle:
         except Exception:
             pass
 
-    async def close(self, delegation: Delegation, outcome: str) -> None:
+    async def close(
+        self, delegation: Delegation, outcome: str, detail: dict[str, Any] | None = None
+    ) -> None:
         """Close the delegation's record with exactly one terminal outcome.
+
+        Args:
+            delegation: The delegation to close.
+            outcome: One of the four terminal outcomes.
+            detail: Anything the caller learned that the lifecycle cannot observe —
+                the child's usage, its clamped effort, its session id. The lifecycle
+                deliberately does not read transcripts itself, but without a way to
+                pass what the caller read, the cost term never reaches the record and
+                every episode in the corpus loses it.
 
         Idempotent: a delegation the lifecycle already closed as ``abandon`` must not
         get a second record when the orchestrator later returns a verdict for it.
@@ -368,15 +379,16 @@ class Lifecycle:
         if delegation.outcome is not None:
             return
         delegation.outcome = outcome
-        self.recorder.close(
-            delegation.delegation_id,
-            outcome,
-            {
-                "selector": delegation.selector,
-                "correction_count": delegation.correction_count,
-                "surviving_size": delegation.surviving_size,
-                "restarted_from": delegation.restarted_from,
-                "degradations": [entry.as_dict() for entry in delegation.degradations],
-            },
-        )
+        payload: dict[str, Any] = {
+            "selector": delegation.selector,
+            "correction_count": delegation.correction_count,
+            "surviving_size": delegation.surviving_size,
+            "restarted_from": delegation.restarted_from,
+            "degradations": [entry.as_dict() for entry in delegation.degradations],
+        }
+        if detail:
+            merged = list(payload["degradations"]) + list(detail.get("degradations", ()))
+            payload.update(detail)
+            payload["degradations"] = merged
+        self.recorder.close(delegation.delegation_id, outcome, payload)
         spec_module.clear_signal(delegation.delegation_id)
