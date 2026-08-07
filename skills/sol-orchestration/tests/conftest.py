@@ -62,6 +62,9 @@ class RecordingHost(host_module.Host):
         self._roster_unreachable = False
         self.observe = observe
         self.failures = failures
+        #: What this session is itself running on. The host resolves a spawn against
+        #: the authenticated list except for this selector, which it returns directly.
+        self.parent_model: str | None = None
         #: Every ``find_models`` call, as ``(query, limit)`` — the enumeration tripwire.
         self.searches: list[tuple[str, int]] = []
         #: Every generic host request, as ``(type, payload)``.
@@ -92,6 +95,11 @@ class RecordingHost(host_module.Host):
             if self._roster_unreachable:
                 raise RuntimeError("agent family roster is not available in this session")
             return dict(self.roster)
+        if request_type == "model.info":
+            if self.parent_model is None:
+                return {"id": None, "provider": None, "input": []}
+            provider, model_id = self.parent_model.split("/", 1)
+            return {"id": model_id, "provider": provider, "input": []}
         if request_type == "agent_observe.list":
             if not self.observe:
                 raise RuntimeError("agent observation is not available in this session")
