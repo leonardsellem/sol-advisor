@@ -9,9 +9,9 @@ Act as the orchestrator. You own the objective, the decomposition, each child's
 specification, and the acceptance decision. Children own implementation inside the
 boundary you gave them, and nothing else.
 
-Preflight, routing, the delegation lifecycle, evidence collection, and packet assembly
-are implemented. Episodes are not yet — this document carries the whole contract
-regardless. Everything below is runnable by hand today, and the manual procedure is
+Preflight, routing, the delegation lifecycle, evidence collection, packet assembly and
+the episode corpus are all implemented. This document carries the whole contract
+regardless of whether the Python loads. Everything below is runnable by hand today, and the manual procedure is
 not a fallback of last resort: it is the procedure, with the Python call as a
 convenience on top.
 
@@ -309,6 +309,66 @@ zero exit the log is the least load-bearing thing in the packet and is cut first
 
 Every cut is marked inline and recorded as a degradation. If you see the truncation
 mark, you are judging a fragment — ask for more rather than concluding from it.
+
+## Every delegation leaves exactly one episode
+
+The episode corpus is what this whole package is for. Everything else exists so a
+later plan can fit a routing policy against real evidence instead of intuition, and a
+record that is missing, collapsed, or confounded cannot be backfilled — the delegation
+it described is gone.
+
+    book = ledger.Ledger()
+    engine = lifecycle.Lifecycle(declared=declared, recorder=book, snapshotter=...)
+    ...
+    book.record_round(delegation.delegation_id, round_outcome)
+    await engine.close(delegation, "ship")
+
+**Two-phase write.** The record opens before the spawn and closes at the terminal
+outcome. Nothing else keeps a spawn that raises, or a delegation that hung, or one you
+abandoned — and those are the highest-information episodes there are. A design that
+only wrote on success would lose exactly them.
+
+**Per-round outcomes, never one collapsed result.** A model that passed first try and
+one that passed after three corrections are different records. That distinction is the
+entire reason the data is being collected, so call `record_round` for each round rather
+than only reporting the last.
+
+**Four confounder controls on every record**: the exact selector passed, the effort in
+force at that spawn, the child's effective effort after clamping, and the surviving
+allowlist size. You can move the effort dial mid-session at any time, so the level is
+re-read at each spawn rather than captured once — without that the corpus cannot
+separate a model's contribution from the conditions it ran under.
+
+**Cost comes from the child's own transcript.** Every assistant message carries a usage
+block with token counts and per-component cost, so a child's cost is summed from its
+own session file rather than bracketed out of yours. When it is unreadable the record
+is written **without** the cost term and with a degradation recorded — never a zero,
+because a zero reads as a delegation that was free.
+
+### If a turn is lost
+
+    for open_delegation in ledger.Ledger().open_delegations():
+        ...   # close it, as abandon if nothing else
+
+Reconstruction is from the ledger alone — an append-only event log, replayed. A crash
+mid-write costs one truncated line, not the state. Reconciling against live child
+sessions is deliberately not attempted.
+
+### Reading the corpus back
+
+    reader.summarise()        # records, valid, unknown-version, outcomes, missing cost
+    reader.validate(record)   # per record
+
+An unknown schema version is reported, never crashed on: a future reader meeting a
+record it does not understand should say so and carry on with the ones it does.
+
+### What is not enforced
+
+Append-only is a **convention**. The store sits under the Prime Agent home and any
+child runs with your permissions. The evidence layer's store-size check is the only
+compensating signal, and it tells you the store changed — not that a particular record
+is fake. A child that appended plausible records rather than editing existing ones
+would poison a later policy fit without tripping anything. That is a known hole.
 
 ## The delegation contract
 
