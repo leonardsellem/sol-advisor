@@ -127,6 +127,17 @@ for entry in $skill_roots; do
 		continue
 	fi
 	pass "pi.skills entry '$entry' resolves to $resolved"
+
+	# Prime Agent discovers direct root .md files in a skills root as individual
+	# skills. A README.md or AGENTS.md left there is loaded as a malformed skill and
+	# warns on every session start. Documentation for a skills root belongs one level
+	# up; documentation inside a skill directory is never scanned and is fine.
+	loose=$(find "$resolved" -maxdepth 1 -type f -name '*.md' | sort | tr '\n' ' ')
+	if [ -n "$loose" ]; then
+		fail "$(printf '%s' "$loose" | sed 's/ $//')" "loose markdown in the skills root '$entry' is discovered as a skill and will warn on every session start; move it up a level"
+	else
+		pass "skills root '$entry' has no loose markdown discovered as a skill"
+	fi
 	found=$(find "$resolved" -name SKILL.md -type f | sort)
 	if [ -z "$found" ]; then
 		fail "$resolved" "contains no SKILL.md; nothing would be discovered from this entry"
