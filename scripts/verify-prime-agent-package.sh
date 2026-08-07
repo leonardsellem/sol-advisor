@@ -8,12 +8,25 @@
 # failures loud. It checks structure only — it never installs, never starts a session,
 # and never touches the operator's Prime Agent home or kernel venv.
 #
-# Usage: sh scripts/verify-prime-agent-package.sh [package-root]
+# The full pass adds four things the structural checks cannot see: the Python suite,
+# an install cycle against a disposable home, a parity assertion that no code path
+# tries to read or write a thinking level through the host, and the Codex plugin
+# verifier still passing. None of them spends model quota.
+#
+# Usage: sh scripts/verify-prime-agent-package.sh [package-root] [--structural-only]
 # Exit:  0 when every check passes; 1 otherwise, naming each offending file.
 
 set -u
 
-ROOT=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
+STRUCTURAL_ONLY=no
+ROOT=""
+for argument in "$@"; do
+	case "$argument" in
+	--structural-only) STRUCTURAL_ONLY=yes ;;
+	*) ROOT="$argument" ;;
+	esac
+done
+ROOT=${ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
 MANIFEST="$ROOT/package.json"
 
 failures=0
@@ -209,6 +222,130 @@ for skill_dir in $skill_dirs; do
 		pass "$skill_dir/src has no module-level import of the bundled runtime"
 	fi
 done
+
+skip() {
+	printf 'skip %s: %s\n' "$1" "$2"
+}
+
+# --- no thinking or effort host request, anywhere ------------------------------
+#
+# Nothing in the kernel can set a thinking level: the host bridge exposes no handler
+# for it, so a call would fail at best and silently no-op at worst. The whole design
+# rests on one operator-set dial per session, and this is what stops a future edit
+# quietly introducing a best-effort call that appears to work.
+#
+# This looks for host *call sites*, not for the words. Reading a transcript's
+# thinking_level_change entries is exactly how effort is observed and must stay legal.
+
+for skill_dir in $skill_dirs; do
+	[ -n "$skill_dir" ] || continue
+	[ -d "$skill_dir/src" ] || continue
+
+	effort_calls=$(grep -rnE '(host_request|\.request|rlm\.[a-z_]+)\([^)]*(thinking|effort)' "$skill_dir/src" 2>/dev/null || true)
+	handler_names=$(grep -rnE '"[a-z_]+\.[a-z_]*(thinking|effort)[a-z_]*"' "$skill_dir/src" 2>/dev/null || true)
+	offending=$(printf '%s\n%s' "$effort_calls" "$handler_names" | grep -v '^$' || true)
+
+	if [ -n "$offending" ]; then
+		fail "$skill_dir/src" "issues a thinking or effort host request; no such handler exists, so this would fail or silently no-op. Only the operator can change the level, through /effort:
+$offending"
+	else
+		pass "$skill_dir/src issues no thinking or effort host request"
+	fi
+done
+
+# --- the Codex plugin is untouched and still green -----------------------------
+#
+# The Codex plugin verifier's own passing run is the standing evidence that installing
+# this package changes nothing about the plugin already in this repository.
+
+CODEX_VERIFIER="$ROOT/plugins/sol-advisor/scripts/verify.sh"
+if [ ! -f "$CODEX_VERIFIER" ]; then
+	fail "$CODEX_VERIFIER" "the Codex plugin verifier is missing; the evidence that this package leaves the plugin untouched has gone with it"
+elif [ "$STRUCTURAL_ONLY" = yes ]; then
+	skip "$CODEX_VERIFIER" "--structural-only"
+elif codex_output=$(sh "$CODEX_VERIFIER" 2>&1); then
+	pass "$CODEX_VERIFIER still passes"
+else
+	fail "$CODEX_VERIFIER" "the Codex plugin verifier failed:
+$(printf '%s' "$codex_output" | tail -20)"
+fi
+
+# --- the Python suite ----------------------------------------------------------
+
+if [ "$STRUCTURAL_ONLY" = yes ]; then
+	skip "python suite" "--structural-only"
+elif ! command -v uv >/dev/null 2>&1; then
+	skip "python suite" "uv is not installed; install it to run this check"
+else
+	for skill_dir in $skill_dirs; do
+		[ -n "$skill_dir" ] || continue
+		[ -d "$skill_dir/tests" ] || continue
+		if suite_output=$(cd "$skill_dir" && uv run --with pytest python -m pytest -q 2>&1); then
+			pass "$skill_dir/tests: $(printf '%s' "$suite_output" | tail -1)"
+		else
+			fail "$skill_dir/tests" "the Python suite failed:
+$(printf '%s' "$suite_output" | tail -25)"
+		fi
+	done
+fi
+
+# --- isolated install cycle ----------------------------------------------------
+#
+# Both variables are redirected. The home variable alone does not isolate the kernel
+# venv: Prime Agent resolves that from its own variable and otherwise from a path
+# hardcoded off the real user home, so a half-redirected cycle editable-installs into,
+# and rebuilds, the operator's real venv. The real home is compared by path and size
+# rather than by a hash including mtimes, which unrelated activity moves on a live host.
+
+real_home=${PRIME_AGENT_CODING_AGENT_DIR:-$HOME/.prime/agent}
+
+if [ "$STRUCTURAL_ONLY" = yes ]; then
+	skip "install cycle" "--structural-only"
+elif ! command -v prime-agent >/dev/null 2>&1; then
+	skip "install cycle" "prime-agent is not installed; install it to run this check"
+else
+	before=$(mktemp)
+	after=$(mktemp)
+	find "$real_home" -printf '%p|%s\n' 2>/dev/null | sort > "$before"
+
+	disposable_home=$(mktemp -d)
+	disposable_venv=$(mktemp -d)/kernel-venv
+	install_log=$(mktemp)
+
+	if PRIME_AGENT_CODING_AGENT_DIR="$disposable_home" PRIME_AGENT_KERNEL_VENV="$disposable_venv" \
+		prime-agent package install "$ROOT" >"$install_log" 2>&1; then
+		listed=$(PRIME_AGENT_CODING_AGENT_DIR="$disposable_home" PRIME_AGENT_KERNEL_VENV="$disposable_venv" \
+			prime-agent package list 2>&1 || true)
+		if printf '%s' "$listed" | grep -qF "$ROOT"; then
+			pass "install cycle: the package appears in a disposable home"
+		else
+			fail "install cycle" "the package installed but does not appear in package list"
+		fi
+
+		PRIME_AGENT_CODING_AGENT_DIR="$disposable_home" PRIME_AGENT_KERNEL_VENV="$disposable_venv" \
+			prime-agent package remove "$ROOT" >>"$install_log" 2>&1 || true
+		listed_after=$(PRIME_AGENT_CODING_AGENT_DIR="$disposable_home" PRIME_AGENT_KERNEL_VENV="$disposable_venv" \
+			prime-agent package list 2>&1 || true)
+		if printf '%s' "$listed_after" | grep -qF "$ROOT"; then
+			fail "install cycle" "the package is still listed after removal"
+		else
+			pass "install cycle: the package disappears after removal"
+		fi
+	else
+		fail "install cycle" "prime-agent package install failed:
+$(tail -10 "$install_log")"
+	fi
+
+	find "$real_home" -printf '%p|%s\n' 2>/dev/null | sort > "$after"
+	if diff -q "$before" "$after" >/dev/null 2>&1; then
+		pass "the operator's real Prime Agent home at $real_home is unchanged (compared by path and size)"
+	else
+		fail "$real_home" "changed during the install cycle; the redirect did not hold:
+$(diff "$before" "$after" | head -10)"
+	fi
+
+	rm -rf "$disposable_home" "$(dirname "$disposable_venv")" "$before" "$after" "$install_log"
+fi
 
 printf '\n%d check(s) passed, %d failed\n' "$checks" "$failures"
 [ "$failures" -eq 0 ] || exit 1
