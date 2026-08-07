@@ -9,11 +9,10 @@ Act as the orchestrator. You own the objective, the decomposition, each child's
 specification, and the acceptance decision. Children own implementation inside the
 boundary you gave them, and nothing else.
 
-Preflight and routing are implemented. Delegation transport, evidence capture, and
-episodes are not yet — this document carries the whole contract regardless.
-Everything below is runnable by hand today, and the manual procedure is not a
-fallback of last resort: it is the procedure, with the Python call as a convenience
-on top.
+Preflight, routing, and the delegation lifecycle are implemented. Evidence capture and
+episodes are not yet — this document carries the whole contract regardless. Everything
+below is runnable by hand today, and the manual procedure is not a fallback of last
+resort: it is the procedure, with the Python call as a convenience on top.
 
 ## Check the environment first
 
@@ -123,6 +122,69 @@ With no Python: read the config file yourself, run `prime-agent model list` and 
 every declared entry that does not appear in it verbatim, confirm `/effort` is at
 `high` or above, then apply the prior's rules in order against what survived. Refuse
 in exactly the cases listed above rather than substituting a model.
+
+## Dispatch and collect are two separate turns
+
+The spawn is **asynchronous**. It returns an admission handle and never the child's
+answer, so a delegation spans at least two of your turns with a ledger between them.
+
+    delegation = await engine.dispatch(spec, selector=decision.selector,
+                                       surviving=report.surviving)
+    # your turn ends here; the child runs detached
+    collection = await engine.collect(delegation, bound_seconds=900)
+
+Inside `dispatch` the order is fixed and it is a correctness requirement, not a
+style: **snapshot the tree, open the episode record, then spawn.** A record opened
+after the handle returns loses every spawn that raises — and a spawn that fails after
+surviving preflight is among the most informative records the corpus can hold.
+
+Dispatch refuses without an explicitly routed selector, refuses a selector preflight
+did not return, and refuses without a pre-spawn snapshot. The first of those is the
+most important guard in the package: **a spawn with no model argument does not fail,
+it inherits your model** — the expensive orchestrator — so a dropped selector would
+route every delegation to the most expensive model in the system and pass every gate.
+
+## The child signals completion by writing a file
+
+The host delivers a child's last output straight to you and the spawn call offers no
+way to suppress it. So a child that *replies* has written directly into your only
+input, outside the evidence packet — which is precisely the channel the trust boundary
+exists to close. Completion is therefore read from one file and nothing else:
+
+    <PRIME_AGENT_CODING_AGENT_DIR or ~/.prime/agent>/sol-orchestration/signals/<delegation-id>.json
+
+That path is the single carve-out from the child's prohibition on touching anything
+under the Prime Agent home, it is write-only, and a malformed signal is not a
+completion. A child that finishes without writing it is **not** collected as done, no
+matter what its reply said.
+
+Collection is bounded. A child that never reports within the bound is cancelled and
+closed as `abandon`, with its record written and a timeout degradation recorded.
+
+## Corrections go to the same child, or restart on the same model
+
+    result = await engine.correct(delegation, "the retry count is off by one")
+
+A correction can only reach a child that is still retained and addressable. When the
+child is gone, the correction opens a **new linked delegation id on the same model**,
+marked restarted-context — and the original's correction count does **not** move,
+because a restarted context is not another round against the same child. Confusing the
+two would make a model that recovered in one round look identical to one that needed
+four.
+
+The `fix-first` loop is capped. At the cap `correct` refuses and returns
+`forced_rethink`, which means the specification is wrong rather than the execution.
+The cap is a package constant, not a config key: a stop an operator can raise is not
+a stop.
+
+### Doing this by hand
+
+Spawn with `await rlm.run(prompt, name=..., model=...)` passing **exactly** those two
+keyword arguments and never omitting `model`. Poll the signal path yourself rather
+than reading the child's reply. Deliver a correction with
+`await agent_message.send(text, receiver_role="child", receiver_name=<the child's name>)`,
+and if that raises, treat the child as gone and start a fresh delegation on the same
+model rather than picking a different one.
 
 ## The delegation contract
 
