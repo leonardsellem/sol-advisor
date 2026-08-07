@@ -26,7 +26,13 @@ from typing import Any, Iterator, Protocol
 from . import config as config_module
 from . import host as host_module
 from . import spec as spec_module
-from .contract import CHILD_TIMEOUT, SPAWN_RAISED, Degradation, Refusal
+from .contract import (
+    CHILD_TIMEOUT,
+    RESTART_ONLY_CORRECTIONS,
+    SPAWN_RAISED,
+    Degradation,
+    Refusal,
+)
 
 #: The verdicts a delegation boundary may close with.
 BOUNDARY_OUTCOMES = ("ship", "fix-first", "rethink", "abandon")
@@ -315,16 +321,28 @@ class Lifecycle:
         if delegation.correction_count >= FIX_FIRST_CAP:
             return CorrectionResult(delivered=False, restarted=False, forced_rethink=True)
 
+        restart_reason = "the child is not retained or addressable"
         if await self._child_is_addressable(delegation):
             try:
                 await self.host.send_message(
                     message, receiver_role="child", receiver_name=delegation.child_name
                 )
-            except Exception:
-                pass  # fall through to the restart path below
+            except Exception as error:
+                restart_reason = (
+                    f"direct correction failed ({type(error).__name__}); "
+                    "host error text omitted from the persistent corpus"
+                )
             else:
                 delegation.correction_count += 1
                 return CorrectionResult(delivered=True, restarted=False, forced_rethink=False)
+
+        if not any(entry.kind == RESTART_ONLY_CORRECTIONS for entry in delegation.degradations):
+            delegation.degradations.append(
+                Degradation(
+                    kind=RESTART_ONLY_CORRECTIONS,
+                    detail=restart_reason + " — correction restarted on the same model",
+                )
+            )
 
         restarted = await self.dispatch(
             delegation.spec,

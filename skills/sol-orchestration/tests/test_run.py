@@ -2,7 +2,10 @@
 
 import asyncio
 import builtins
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -58,6 +61,46 @@ def test_run_reports_runtime_degradation_explicitly(monkeypatch: pytest.MonkeyPa
     report = call()
     assert "degraded" in report
     assert "SKILL.md" in report
+
+
+def test_an_importable_runtime_is_not_reported_as_verified_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The failing trace imported rlm but its required host request was unavailable."""
+    real_import = builtins.__import__
+
+    def importable_runtime(name: str, *args: object, **kwargs: object) -> object:
+        if name == sol_orchestration.RUNTIME_MODULE:
+            return object()
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", importable_runtime)
+    report = call()
+    assert "runtime module: importable" in report
+    assert "delegation capability: unverified" in report
+    assert "in-kernel delegation is reachable" not in report
+    assert "preflight.run" in report
+
+
+def test_documented_modules_are_exposed_after_a_fresh_package_import() -> None:
+    """Package-root examples must not depend on a prior submodule import."""
+    package_root = Path(sol_orchestration.__file__).resolve().parents[1]
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(package_root)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sol_orchestration; "
+            "assert callable(sol_orchestration.preflight.run); "
+            "assert callable(sol_orchestration.routing.select)",
+        ],
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_verbose_adds_the_interpreter_and_module_path() -> None:

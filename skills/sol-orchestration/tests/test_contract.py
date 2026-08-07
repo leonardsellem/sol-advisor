@@ -40,6 +40,7 @@ def test_degradation_kinds_cover_the_stated_vocabulary() -> None:
         contract.CHILD_TIMEOUT,
         contract.SPAWN_RAISED,
         contract.UNRECOGNIZED_RUNTIME_VERSION,
+        contract.RESTART_ONLY_CORRECTIONS,
     }
     assert required <= contract.DEGRADATION_KINDS
 

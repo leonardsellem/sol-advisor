@@ -38,9 +38,10 @@ class RecordingHost(host_module.Host):
     Args:
         catalog: Selectors the authenticated model search should be able to return.
         subagents: Registry entries ``list_subagents`` should report.
-        roster: Reply for ``agent_message.list_agents``; ``None`` makes it unreachable,
-            which is how a session that is not daemon-backed presents itself.
-        observe: Whether ``agent_observe.list`` is reachable.
+        roster: Reply for ``agent_message.list_agents``; call ``without_roster`` to
+            model a session where direct messaging is unavailable.
+        observe: Legacy tripwire used to prove preflight does not depend on
+            ``agent_observe.list``.
         failures: Selectors whose availability query should raise, standing in for an
             expired credential.
     """
@@ -170,6 +171,8 @@ class RecordingHost(host_module.Host):
         return handle
 
     async def send_message(self, message: str, *, receiver_role: str, receiver_name: str) -> dict[str, Any]:
+        if self._roster_unreachable:
+            raise RuntimeError("agent messaging is not available in this session")
         if receiver_name in self.vanished:
             raise RuntimeError(f"no child named {receiver_name} in this agent family")
         payload = {"message": message, "receiver_role": receiver_role, "receiver_name": receiver_name}

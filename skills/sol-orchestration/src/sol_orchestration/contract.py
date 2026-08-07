@@ -39,6 +39,8 @@ CHILD_TIMEOUT = "child-timeout"
 SPAWN_RAISED = "spawn-raised-after-preflight"
 #: The runtime is not the version every contract in this package was verified against.
 UNRECOGNIZED_RUNTIME_VERSION = "unrecognized-runtime-version"
+#: Direct child messaging is unavailable; corrections open linked same-model restarts.
+RESTART_ONLY_CORRECTIONS = "restart-only-corrections"
 
 #: The closed vocabulary. Free-text kinds would make the corpus unqueryable one typo
 #: at a time, and the corpus is this package's deliverable.
@@ -54,6 +56,7 @@ DEGRADATION_KINDS = frozenset(
         CHILD_TIMEOUT,
         SPAWN_RAISED,
         UNRECOGNIZED_RUNTIME_VERSION,
+        RESTART_ONLY_CORRECTIONS,
     }
 )
 

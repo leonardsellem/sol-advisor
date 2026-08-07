@@ -214,6 +214,42 @@ def test_a_correction_to_a_live_retained_child_reaches_it_by_name(declared: conf
     assert delegation.correction_count == 1
 
 
+def test_an_unreachable_message_channel_restarts_on_the_same_model(
+    declared: config.Config,
+) -> None:
+    """Trace regression: no agent_message still has the lifecycle's recorded restart path."""
+    engine, host, recorder, _, _ = build(declared)
+    host.without_roster()
+    delegation = asyncio.run(engine.dispatch(a_spec(), selector=ROUTED, surviving=SURVIVING))
+
+    result = asyncio.run(engine.correct(delegation, "the retry count is off by one"))
+
+    assert result.delivered is False
+    assert result.restarted is True
+    assert result.delegation is not None
+    assert result.delegation.selector == delegation.selector
+    assert result.delegation.restarted_from == delegation.delegation_id
+    assert len(recorder.opened()) == 2, "the restart bypassed the episode lifecycle"
+    assert contract.RESTART_ONLY_CORRECTIONS in {
+        entry.kind for entry in delegation.degradations
+    }, "the runtime fallback was absent from the episode detail"
+
+    asyncio.run(engine.close(delegation, "fix-first"))
+    asyncio.run(engine.close(result.delegation, "ship"))
+    assert recorder.closed() == [
+        (delegation.delegation_id, "fix-first"),
+        (result.delegation.delegation_id, "ship"),
+    ]
+    original_close = next(
+        payload
+        for kind, delegation_id, payload in recorder.events
+        if kind == "close" and delegation_id == delegation.delegation_id
+    )
+    assert contract.RESTART_ONLY_CORRECTIONS in {
+        entry["kind"] for entry in original_close["degradations"]
+    }
+
+
 def test_a_correction_to_a_vanished_child_opens_a_new_linked_delegation(
     declared: config.Config,
 ) -> None:
