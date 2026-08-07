@@ -30,6 +30,9 @@ MODEL_SEARCH_LIMIT = 20
 #: The bundled runtime module. Imported lazily inside calls, never at module level.
 RUNTIME_MODULE = "rlm"
 
+#: The runtime caps a child session name at this length and raises above it.
+CHILD_NAME_MAX_LENGTH = 64
+
 
 class HostUnavailable(RuntimeError):
     """The Prime Agent host bridge is not reachable from this process."""
@@ -56,6 +59,22 @@ class ModelMatch:
     id: str
     name: str
     selector: str
+
+
+@dataclass(frozen=True)
+class SpawnHandle:
+    """What a spawn returns: an admission, never the child's answer.
+
+    The call is asynchronous. It resolves once the child's task is admitted, so
+    dispatch and collection are separate orchestrator turns with a ledger between
+    them — and a delegation that crashes between the two leaves a record rather than
+    vanishing.
+    """
+
+    child_id: str
+    name: str
+    session_dir: Path
+    model: str
 
 
 @dataclass(frozen=True)
@@ -95,6 +114,52 @@ class Host:
         """List the direct children the parent session currently retains."""
         raise NotImplementedError
 
+    async def spawn(self, prompt: str, *, name: str, selector: str) -> SpawnHandle:
+        """Spawn one child on an explicitly routed selector.
+
+        This is deliberately a concrete method rather than an override point. The
+        guard below is the single most valuable one in the package and it must not be
+        possible for a subclass — a double, a future transport — to be written without
+        it. Subclasses implement :meth:`_spawn`, which is only ever reached once these
+        checks have passed.
+
+        A spawn with no model argument does **not** fail: the host resolves it to the
+        parent's own model, which is the expensive orchestrator. So a bug that drops
+        the selector routes every delegation to the most expensive model in the system
+        and passes every gate while doing it.
+
+        Raises:
+            ValueError: The prompt, the name, or the selector is missing or unusable.
+                Raised before any host request is issued.
+        """
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("a spawn needs a non-empty prompt")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("a spawn needs a non-empty child name")
+        if len(name) > CHILD_NAME_MAX_LENGTH:
+            raise ValueError(
+                f"child name must be at most {CHILD_NAME_MAX_LENGTH} characters, got {len(name)}"
+            )
+        if not isinstance(selector, str) or not selector.strip():
+            raise ValueError(
+                "a spawn needs an explicitly routed provider/model selector; without one the host "
+                "resolves the child to the parent's own model, silently routing this delegation "
+                "to the most expensive model in the system"
+            )
+        return await self._spawn(prompt, name=name, selector=selector)
+
+    async def _spawn(self, prompt: str, *, name: str, selector: str) -> SpawnHandle:
+        """Issue the validated spawn. Implemented per transport."""
+        raise NotImplementedError
+
+    async def send_message(self, message: str, *, receiver_role: str, receiver_name: str) -> dict[str, Any]:
+        """Deliver one direct message to a named child."""
+        raise NotImplementedError
+
+    async def delete_subagent(self, target: str) -> dict[str, Any]:
+        """Tear down one child by id or session name."""
+        raise NotImplementedError
+
 
 class RuntimeHost(Host):
     """Answers from the bundled runtime, imported lazily on every call."""
@@ -131,6 +196,28 @@ class RuntimeHost(Host):
             for entry in entries
         )
 
+    async def _spawn(self, prompt: str, *, name: str, selector: str) -> SpawnHandle:
+        # Exactly a name and a model. The runtime rejects any other option with an
+        # explicit unsupported-kwargs error rather than ignoring it, and there is no
+        # thinking option here at all — a child inherits the parent's level, clamped
+        # to what its own model supports.
+        handle = await self._runtime().run(prompt, name=name, model=selector)
+        return SpawnHandle(
+            child_id=handle.rlm_child_id,
+            name=handle.name,
+            session_dir=Path(handle.session_dir),
+            model=handle.model,
+        )
+
+    async def send_message(self, message: str, *, receiver_role: str, receiver_name: str) -> dict[str, Any]:
+        return await self.request(
+            "agent_message.send",
+            {"message": message, "receiver_role": receiver_role, "receiver_name": receiver_name},
+        )
+
+    async def delete_subagent(self, target: str) -> dict[str, Any]:
+        return await self.request("rlm.delete_subagent", {"target": target})
+
 
 class UnavailableHost(Host):
     """Reports the bridge as unreachable, carrying the reason it was not reachable."""
@@ -148,6 +235,15 @@ class UnavailableHost(Host):
         raise self._fail()
 
     async def list_subagents(self) -> tuple[Subagent, ...]:
+        raise self._fail()
+
+    async def _spawn(self, prompt: str, *, name: str, selector: str) -> SpawnHandle:
+        raise self._fail()
+
+    async def send_message(self, message: str, *, receiver_role: str, receiver_name: str) -> dict[str, Any]:
+        raise self._fail()
+
+    async def delete_subagent(self, target: str) -> dict[str, Any]:
         raise self._fail()
 
 

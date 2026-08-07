@@ -66,6 +66,20 @@ class RecordingHost(host_module.Host):
         self.searches: list[tuple[str, int]] = []
         #: Every generic host request, as ``(type, payload)``.
         self.requests: list[tuple[str, dict[str, Any] | None]] = []
+        #: Every spawn, as the full keyword set the adapter passed. A spawn carrying
+        #: anything beyond a name and a selector is a defect the runtime would reject,
+        #: and a spawn carrying no selector silently inherits the parent's model.
+        self.spawns: list[dict[str, Any]] = []
+        #: Every correction delivered, as the payload the bundled skill would send.
+        self.messages: list[dict[str, Any]] = []
+        #: Every child deleted, by target.
+        self.deletions: list[str] = []
+        #: Selectors whose spawn should raise, standing in for a model that went away
+        #: between preflight and dispatch.
+        self.spawn_failures: tuple[str, ...] = ()
+        #: Child names that should be treated as gone when a correction is delivered.
+        self.vanished: tuple[str, ...] = ()
+        self._child_counter = 0
 
     def without_roster(self) -> RecordingHost:
         """Present as a session whose agent-family roster is unavailable."""
@@ -120,6 +134,121 @@ class RecordingHost(host_module.Host):
     async def list_subagents(self) -> tuple[host_module.Subagent, ...]:
         self.requests.append(("rlm.list_subagents", None))
         return self.subagents_registry
+
+    async def _spawn(self, prompt: str, *, name: str, selector: str) -> host_module.SpawnHandle:
+        # Record the whole keyword set, not just the two fields expected: a test can
+        # only prove "nothing else was passed" if the double captures everything.
+        self.spawns.append({"prompt": prompt, "name": name, "selector": selector})
+        if selector in self.spawn_failures:
+            raise RuntimeError(f"model {selector} is not available or not authenticated")
+        self._child_counter += 1
+        child_id = f"sub-{self._child_counter:04d}"
+        handle = host_module.SpawnHandle(
+            child_id=child_id,
+            name=name,
+            session_dir=Path(f"/tmp/{child_id}"),
+            model=selector,
+        )
+        self.subagents_registry = self.subagents_registry + (
+            host_module.Subagent(
+                child_id=child_id,
+                active_session_id=f"active-{child_id}",
+                session_id=f"sess-{child_id}",
+                session_name=name,
+                session_dir=Path(f"/tmp/{child_id}"),
+                status="running",
+            ),
+        )
+        return handle
+
+    async def send_message(self, message: str, *, receiver_role: str, receiver_name: str) -> dict[str, Any]:
+        if receiver_name in self.vanished:
+            raise RuntimeError(f"no child named {receiver_name} in this agent family")
+        payload = {"message": message, "receiver_role": receiver_role, "receiver_name": receiver_name}
+        self.messages.append(payload)
+        return {"deliveryStatus": "delivered"}
+
+    async def delete_subagent(self, target: str) -> dict[str, Any]:
+        self.deletions.append(target)
+        self.subagents_registry = tuple(
+            entry for entry in self.subagents_registry if entry.child_id != target and entry.session_name != target
+        )
+        return {"subagent": {"rlm_child_id": target}, "outcome": "deleted"}
+
+    def complete_child(self, name: str, status: str = "completed") -> None:
+        """Move a child to a terminal registry status, as the host would."""
+        self.subagents_registry = tuple(
+            host_module.Subagent(
+                child_id=entry.child_id,
+                active_session_id=entry.active_session_id,
+                session_id=entry.session_id,
+                session_name=entry.session_name,
+                session_dir=entry.session_dir,
+                status=status if entry.session_name == name else entry.status,
+            )
+            for entry in self.subagents_registry
+        )
+
+    def forget_child(self, name: str) -> None:
+        """Drop a child from the registry, as a lost or torn-down child would be."""
+        self.vanished = self.vanished + (name,)
+        self.subagents_registry = tuple(
+            entry for entry in self.subagents_registry if entry.session_name != name
+        )
+
+
+class FakeClock:
+    """A clock that only moves when a test moves it, so timeouts are provable fast."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.slept: list[float] = []
+
+    def time(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+class RecordingRecorder:
+    """Stands in for the episode store the next-but-one workstream owns.
+
+    It exists here so the ordering this workstream is responsible for — snapshot,
+    then open the record, then spawn — is provable now rather than asserted later.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, dict[str, Any]]] = []
+
+    def open(self, delegation_id: str, record: dict[str, Any]) -> None:
+        self.events.append(("open", delegation_id, dict(record)))
+
+    def close(self, delegation_id: str, outcome: str, detail: dict[str, Any]) -> None:
+        self.events.append(("close", delegation_id, {"outcome": outcome, **detail}))
+
+    def opened(self) -> list[str]:
+        return [delegation_id for kind, delegation_id, _ in self.events if kind == "open"]
+
+    def closed(self) -> list[tuple[str, str]]:
+        return [
+            (delegation_id, payload["outcome"])
+            for kind, delegation_id, payload in self.events
+            if kind == "close"
+        ]
+
+
+class RecordingSnapshotter:
+    """Stands in for the repository snapshot the evidence workstream owns."""
+
+    def __init__(self, available: bool = True) -> None:
+        self.available = available
+        self.captures = 0
+
+    def capture(self) -> object | None:
+        self.captures += 1
+        return {"snapshot": self.captures} if self.available else None
 
 
 @pytest.fixture
