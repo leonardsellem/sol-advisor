@@ -109,7 +109,16 @@ jq empty "$manifest"
 [ "$(jq -r '.version' "$manifest")" = 0.4.0 ] || fail "manifest version is not 0.4.0"
 grep -Fq 'explicit opt-in' "$manifest" || fail "manifest does not describe explicit Luna opt-in"
 grep -Fqi 'GPT-5.6 Luna' "$manifest" || fail "manifest does not describe Luna routing"
-grep -Fq 'Codex app task tools' "$manifest" || fail "manifest does not describe app-task routing"
+# App-task routing is asserted through the tool names in interface.longDescription,
+# not through prose. The earlier assertion required the phrase 'Codex app task tools',
+# which lived only in interface.defaultPrompt — a field Codex caps at 128 characters
+# per entry. Commit e5ed663 had to trim that entry to fit the cap and the phrase went
+# with it, leaving this check red on main. longDescription has no cap, and naming the
+# creation and correction tools is stronger evidence of app-task routing than the
+# phrase was: these are the tools the Luna lane actually runs on.
+for app_task_tool in create_thread send_message_to_thread; do
+  grep -Fq "$app_task_tool" "$manifest" || fail "manifest does not describe app-task routing: $app_task_tool is not named"
+done
 grep -Fq 'fresh Sol' "$manifest" || fail "manifest does not preserve native fresh Sol review"
 pass "manifest JSON, version, and both-mode UI language"
 
