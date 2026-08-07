@@ -9,6 +9,20 @@ delivery. The primary session stays focused on requirements, architecture, specs
 verification while either native Codex custom-agent threads or separate Codex app
 tasks handle the bounded implementation work.
 
+## This repository installs two ways
+
+It carries two independent orchestration contracts, one per harness. They share a
+discipline — a primary session that decomposes and refuses to accept work unverified —
+and nothing else. Neither installs, loads, or affects the other.
+
+| Harness | Install surface | Contract |
+|---|---|---|
+| **Codex** | `plugins/sol-advisor/` (Codex plugin) | Native Terra/Sol lane, or the opt-in Luna task lane. Everything below this section. |
+| **Prime Agent** | `package.json` + `skills/` (capability package) | Cost-routed delegation: an orchestrator that never reads a file, cheap workers from an operator-declared allowlist, and one episode record per delegation. See [Prime Agent capability package](#prime-agent-capability-package). |
+
+State the trigger space out loud when working here: a session should load exactly one
+of these, and which one is decided by the harness it is running in.
+
 ## Go deeper
 
 I write [**Attention Heads**](https://attentionheads.substack.com/?utm_source=github&utm_medium=readme&utm_campaign=sol-advisor) — deep, evidence-backed writing on AI, cognition, and agentic engineering. The **Agentic Engineering Field Notes** series is where I publish practical advice on the craft of using AI. [Subscribe](https://attentionheads.substack.com/subscribe?utm_source=github&utm_medium=readme&utm_campaign=sol-advisor) to get new posts to your inbox.
@@ -249,6 +263,95 @@ completion until that reviewer returns ship. In the Luna lane, the primary Sol t
 performs the review itself and does not launch a native subagent or a nested Codex CLI
 process for the child task. Sol Advisor does not globally reroute unrelated tasks.
 
+## Prime Agent capability package
+
+A second, independent install target. The repository declares a Prime Agent capability
+package whose one skill, `sol-orchestration`, runs a different economics from the Codex
+lane above: the expensive orchestrator decomposes and judges but **never reads a project
+file**, implementation is delegated to cheaper models drawn from an operator-declared
+allowlist, every deterministic check runs inside the persistent IPython kernel at zero
+token cost, and each delegation appends one **episode record** so model choice can later
+be fitted to evidence instead of intuition.
+
+~~~sh
+prime-agent package install git:github.com/leonardsellem/sol-advisor
+~~~
+
+Installing it modifies neither the Codex plugin above nor the marketplace manifest.
+
+### Declare an allowlist before using it
+
+The package ships **no default allowlist and no default model anywhere** — a test scans
+every module to keep it that way. A default would reintroduce a hardcoded role-to-model
+map by being the value nobody edits. Create:
+
+`~/.prime/agent/sol-orchestration/config.json`
+
+~~~json
+{
+  "allowlist": ["provider-a/model-one", "provider-a/model-two"],
+  "review_model": "provider-a/model-two",
+  "verification_commands": { "unit": ["python", "-m", "pytest", "-q"] },
+  "routing_prior": {
+    "default": "provider-a/model-one",
+    "rules": [{ "domain": "python", "difficulty": "hard", "model": "provider-a/model-two" }]
+  }
+}
+~~~
+
+Every entry must be a full `provider/model` selector: the spawn resolves an exact match
+and a bare id can never resolve.
+
+### What it writes, and how to remove it
+
+Everything lives under one directory the package owns:
+
+~~~
+~/.prime/agent/sol-orchestration/
+  config.json      your declarations
+  episodes.jsonl   the corpus — the reason the package exists
+  ledger.jsonl     open-delegation event log, replayed to recover a lost turn
+  signals/         one completion signal per delegation
+  reviews/         one findings file per reviewed delegation
+~~~
+
+~~~sh
+prime-agent package remove git:github.com/leonardsellem/sol-advisor
+~/.prime/agent/kernel-venv/bin/python -m pip uninstall -y sol-orchestration
+rm -rf ~/.prime/agent/sol-orchestration          # deletes the episode corpus
+~~~
+
+`package remove` stops the skill being discovered but does **not** uninstall the
+editable package from the kernel venv — that is the second command. The third deletes
+the corpus; move it first if the episodes matter.
+
+### Verify it
+
+~~~sh
+sh scripts/verify-prime-agent-package.sh
+~~~
+
+19 checks: manifest, skill frontmatter, the Python-backed detection contract, the full
+Python suite, an install cycle against a disposable home, an assertion that no code path
+issues a thinking or effort host request, and the Codex plugin verifier still passing.
+It mutates no Prime Agent configuration and starts no interactive session.
+
+Isolation needs **both** variables. `PRIME_AGENT_CODING_AGENT_DIR` redirects the home;
+`PRIME_AGENT_KERNEL_VENV` redirects the kernel venv, and the runtime never derives one
+from the other. Redirecting only the home leaves an editable install landing in — and
+rebuilding — your real kernel venv.
+
+### What it does not enforce
+
+The kernel is a durable control environment, not a security sandbox. Children run in
+your working tree with your permissions. Every child constraint is prompt text; the
+ownership set is an attribution and detection device, not a boundary; a detected
+violation is reported, never reverted. The package says so and the docs should not be
+softer than the code.
+
+Full contract, including the manual procedure that runs with no Python at all:
+[`skills/sol-orchestration/SKILL.md`](skills/sol-orchestration/SKILL.md).
+
 ## Local development
 
 Install a checkout as a local marketplace when you want Codex to use its skill:
@@ -259,12 +362,13 @@ codex plugin marketplace add /absolute/path/to/sol-advisor
 codex plugin add sol-advisor@sol-advisor
 ~~~
 
-Run the repository verifier separately. It uses only a disposable target directory and
-never changes your Codex configuration:
+Run the repository verifiers separately. Both use only disposable target directories
+and never change your Codex or Prime Agent configuration:
 
 ~~~sh
 cd /absolute/path/to/sol-advisor
-sh plugins/sol-advisor/scripts/verify.sh
+sh plugins/sol-advisor/scripts/verify.sh        # Codex plugin
+sh scripts/verify-prime-agent-package.sh        # Prime Agent package
 git diff --check
 ~~~
 
