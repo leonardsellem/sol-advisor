@@ -27,7 +27,9 @@ sh plugins/sol-advisor/scripts/install-agents.sh --check    # byte-exact role ch
 
 ## A note for contributors on the fork
 
-This directory is inherited from `DannyMac180/sol-advisor` and is deliberately kept
-byte-identical to upstream, apart from this README and `AGENTS.md`. The fork's own work
-lives in `skills/sol-orchestration/` — a separate Prime Agent capability package that
-shares no code with this plugin.
+This directory is inherited from the repository this one was forked from, and is
+deliberately kept byte-identical to it apart from this README and `AGENTS.md`. Run
+`git remote get-url upstream` to see which repository that is for your checkout.
+
+The fork's own work lives in `skills/sol-orchestration/` — a separate Prime Agent
+capability package that shares no code with this plugin.

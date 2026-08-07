@@ -42,6 +42,10 @@ pass() {
 	printf 'ok   %s\n' "$1"
 }
 
+skip() {
+	printf 'skip %s: %s\n' "$1" "$2"
+}
+
 require_command() {
 	if ! command -v "$1" >/dev/null 2>&1; then
 		printf 'FAIL %s: required command not found; install it and re-run\n' "$1" >&2
@@ -83,6 +87,34 @@ if [ "$(jq -r '(.dependencies // {}) | length' "$MANIFEST")" != "0" ]; then
 	fail "$MANIFEST" "declares npm dependencies; this package must install with no dependency graph"
 else
 	pass "$MANIFEST declares no npm dependencies"
+fi
+
+# --- declared repository matches the checkout ---------------------------------
+#
+# Documentation in this repository never hardcodes an owner/repo slug: every command
+# derives it from `origin`, so the docs stay correct here, upstream, and in any fork.
+# `package.json` is the single declared exception, and this is what stops it going
+# stale. A fork that has not updated it is told once, loudly, rather than shipping
+# someone else's URL quietly.
+#
+# Deliberately compares against `origin` and not `gh repo view`: for a fork, `gh`
+# resolves to the *parent* repository, so it would report upstream's slug and this
+# check would pass while the manifest was wrong.
+
+declared_repo=$(jq -r '.repository.url // .repository // ""' "$MANIFEST" \
+	| sed -E 's#^git\+##; s#^(git@|ssh://git@|https://)github\.com[:/]##; s#\.git$##')
+origin_url=$(git -C "$ROOT" remote get-url origin 2>/dev/null || true)
+origin_repo=$(printf '%s' "$origin_url" \
+	| sed -E 's#^(git@|ssh://git@|https://)github\.com[:/]##; s#\.git$##')
+
+if [ -z "$declared_repo" ]; then
+	fail "$MANIFEST" "declares no .repository.url; add one so tooling and docs have a source of truth"
+elif [ -z "$origin_repo" ]; then
+	skip "$MANIFEST repository check" "no git origin remote in $ROOT (tarball or detached checkout)"
+elif [ "$declared_repo" = "$origin_repo" ]; then
+	pass "$MANIFEST .repository.url matches the origin remote ($origin_repo)"
+else
+	fail "$MANIFEST" "declares repository '$declared_repo' but origin is '$origin_repo'. If you forked this repository, update .repository.url and .homepage in package.json to your own slug — that is the only place a slug is written down; every documented command derives it from origin instead"
 fi
 
 # --- skill directories --------------------------------------------------------
@@ -222,10 +254,6 @@ for skill_dir in $skill_dirs; do
 		pass "$skill_dir/src has no module-level import of the bundled runtime"
 	fi
 done
-
-skip() {
-	printf 'skip %s: %s\n' "$1" "$2"
-}
 
 # --- no thinking or effort host request, anywhere ------------------------------
 #

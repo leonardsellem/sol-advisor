@@ -13,10 +13,18 @@ runtime. If it is ambiguous, ask rather than guess.
 
 ## The rule that outranks the rest
 
-**`plugins/` and `.agents/` are upstream's.** This repository is a fork of
-`DannyMac180/sol-advisor`. Those two paths are the Codex plugin and its marketplace
-manifest, and the Prime Agent work is built on the standing evidence that installing it
-changes neither. Before opening a PR that touches anything else:
+**`plugins/` and `.agents/` are inherited, not ours.** They are the Codex plugin and its
+marketplace manifest, and the Prime Agent work in `skills/` is built on the standing
+evidence that installing it changes neither.
+
+When this repository is a fork, that inheritance is literal. Resolve who from the
+checkout rather than from memory — the answer differs per fork and this file travels:
+
+```sh
+git remote get-url upstream 2>/dev/null || echo "no upstream remote configured"
+```
+
+Before opening a PR that touches anything else:
 
 ```sh
 git diff origin/main -- plugins .agents    # must be empty
@@ -87,8 +95,20 @@ tripwire that cries wolf gets ignored.
 
 ## Pull requests
 
-`gh pr create` needs `--repo leonardsellem/sol-advisor`. This is a fork; without it `gh`
-targets upstream and fails with "No commits between main and …".
+**`gh` resolves a fork to its parent.** `gh repo view --json nameWithOwner` returns the
+*upstream* slug, not this checkout's, so a bare `gh pr create` targets upstream and fails
+with "No commits between main and …". Derive from `origin`, which is authoritative:
+
+```sh
+repo=$(git remote get-url origin | sed -E 's#^(git@|ssh://git@|https://)github\.com[:/]##; s#\.git$##')
+gh pr create --repo "$repo" --base main --head "$(git branch --show-current)"
+```
+
+That derivation is the reason no document in this repository hardcodes an owner/repo
+slug: the same command then works here, upstream, and in any fork, with no edit. The one
+declared exception is `.repository.url` in `package.json`, and
+`scripts/verify-prime-agent-package.sh` fails the build when it disagrees with `origin`
+— so a fork is told once, loudly, rather than shipping someone else's URL quietly.
 
 `main` is read-only — work in a worktree off `origin/main`, never check a feature branch
 out in the canonical clone.
