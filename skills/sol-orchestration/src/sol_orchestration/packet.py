@@ -205,6 +205,9 @@ def assemble(
         "integrity_failures": list(evidence.integrity_failures),
         "tamper_paths": list(evidence.tamper_paths),
         "pre_existing_operator_changes": list(evidence.pre_existing_changes),
+        # Reported, not hidden: machine-generated, so not an ownership violation, but a
+        # child could still drop an importable file under one of these paths.
+        "build_artifacts": list(evidence.build_artifacts),
         "head_moved": evidence.head_moved,
         "refs_changed": evidence.refs_changed,
         "stash_changed": evidence.stash_changed,

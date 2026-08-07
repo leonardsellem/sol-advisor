@@ -57,8 +57,20 @@ def store_path() -> Path:
     return home.agent_home() / config_module.CONFIG_DIR_NAME / STORE_FILE_NAME
 
 
-def transcript_path(session_id: str) -> Path:
-    """The session transcript for a given session id, parent or child alike."""
+def transcript_path(session_id: str, session_dir: Path | str | None = None) -> Path:
+    """The session transcript for a given session id.
+
+    A **root** session's transcript lives in ``<home>/sessions/<id>.jsonl``. A **child's**
+    does not: the runtime nests it under the parent's artifact directory, as
+    ``<home>/session-artifacts/<parent-id>/sub-<child-id>/<child-session-id>.jsonl``.
+    So a child's cost is only findable if the caller passes the ``session_dir`` the
+    spawn handle or the subagent registry reported.
+
+    Established by the live smoke run, which produced a real delegation whose cost was
+    recorded as unreadable purely because this resolved to the root layout.
+    """
+    if session_dir is not None:
+        return Path(session_dir) / f"{session_id}.jsonl"
     return home.agent_home() / "sessions" / f"{session_id}.jsonl"
 
 
@@ -101,8 +113,8 @@ class Usage:
     cost_total: float
 
 
-def _transcript_entries(session_id: str) -> list[dict] | None:
-    path = transcript_path(session_id)
+def _transcript_entries(session_id: str, session_dir: Path | str | None = None) -> list[dict] | None:
+    path = transcript_path(session_id, session_dir)
     if not path.exists():
         return None
     try:
@@ -123,7 +135,9 @@ def _transcript_entries(session_id: str) -> list[dict] | None:
     return entries
 
 
-def read_usage(session_id: str) -> tuple[Usage | None, Degradation | None]:
+def read_usage(
+    session_id: str, session_dir: Path | str | None = None
+) -> tuple[Usage | None, Degradation | None]:
     """Sum a child's own usage from its own transcript.
 
     Every assistant message carries a usage block with input, output, cache, total
@@ -136,11 +150,11 @@ def read_usage(session_id: str) -> tuple[Usage | None, Degradation | None]:
         Never raises, and never reports zero for an unreadable signal — a zero would
         read as a delegation that was free.
     """
-    entries = _transcript_entries(session_id)
+    entries = _transcript_entries(session_id, session_dir)
     if entries is None:
         return None, Degradation(
             kind=UNREADABLE_COST,
-            detail=f"no readable transcript at {transcript_path(session_id)}",
+            detail=f"no readable transcript at {transcript_path(session_id, session_dir)}",
         )
 
     totals = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0}
@@ -166,7 +180,7 @@ def read_usage(session_id: str) -> tuple[Usage | None, Degradation | None]:
     if not seen:
         return None, Degradation(
             kind=UNREADABLE_COST,
-            detail=f"the transcript at {transcript_path(session_id)} carried no usage block",
+            detail=f"the transcript at {transcript_path(session_id, session_dir)} carried no usage block",
         )
 
     return (
@@ -182,14 +196,14 @@ def read_usage(session_id: str) -> tuple[Usage | None, Degradation | None]:
     )
 
 
-def read_clamped_effort(session_id: str) -> str | None:
+def read_clamped_effort(session_id: str, session_dir: Path | str | None = None) -> str | None:
     """Return the level a child actually ran at, from its own transcript.
 
     A child receives the parent's level clamped to what its own model supports, so
     this is not necessarily the level the parent was at when it spawned. Recording
     both is what stops the corpus attributing a clamp to the model's ability.
     """
-    entries = _transcript_entries(session_id)
+    entries = _transcript_entries(session_id, session_dir)
     if entries is None:
         return None
     for entry in reversed(entries):
