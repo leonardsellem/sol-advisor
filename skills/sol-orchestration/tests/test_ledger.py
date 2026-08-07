@@ -428,3 +428,55 @@ def test_the_effort_is_read_at_the_spawn_and_not_carried_forward(
     records = {entry["delegation_id"]: entry for entry in reader.read_all()}
     assert records["d-1"]["effort_at_spawn"] == "high"
     assert records["d-2"]["effort_at_spawn"] == "xhigh"
+
+
+def test_an_unreadable_effort_records_why_rather_than_a_bare_null(agent_home: Path) -> None:
+    """A null with no stated reason reads as a fact rather than as an absence.
+
+    The first live delegation recorded effort_at_spawn: null with an empty degradations
+    list — indistinguishable, to whoever fits a policy against this corpus later, from
+    a session that genuinely ran at no effort level.
+    """
+    from sol_orchestration import preflight
+
+    monkey = pytest.MonkeyPatch()
+    monkey.delenv(preflight.SESSION_DIR_ENV_VAR, raising=False)
+    try:
+        book = ledger_module.Ledger()
+        book.open("d-1", {
+            "delegation_id": "d-1", "selector": "a/b", "surviving_size": 1,
+            "domain": "x", "difficulty": "y", "ownership": ["f"], "child_name": "c",
+        })
+        book.close("d-1", "ship", {})
+    finally:
+        monkey.undo()
+
+    record = reader.read_all()[0]
+    assert record["effort_at_spawn"] is None
+    kinds = {entry["kind"] for entry in record["degradations"]}
+    assert contract.UNREADABLE_EFFORT in kinds, "the effort is null with no reason given"
+    assert reader.validate(record).valid is True
+    assert ledger_module.PENDING_DEGRADATIONS_KEY not in record, "plumbing leaked into the corpus"
+
+
+def test_a_readable_effort_records_no_degradation(agent_home: Path, monkeypatch) -> None:
+    from sol_orchestration import preflight
+
+    session_id = "s-clean"
+    sessions = agent_home / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    (sessions / f"{session_id}.jsonl").write_text(
+        json.dumps({"type": "thinking_level_change", "thinkingLevel": "high"}) + "\n",
+        encoding="utf-8",
+    )
+    artifacts = agent_home / "session-artifacts" / session_id
+    artifacts.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv(preflight.SESSION_DIR_ENV_VAR, str(artifacts))
+
+    book = ledger_module.Ledger()
+    book.open("d-1", {"delegation_id": "d-1", "selector": "a/b", "surviving_size": 1,
+                      "domain": "x", "difficulty": "y", "ownership": ["f"], "child_name": "c"})
+    book.close("d-1", "ship", {})
+    record = reader.read_all()[0]
+    assert record["effort_at_spawn"] == "high"
+    assert record["degradations"] == []

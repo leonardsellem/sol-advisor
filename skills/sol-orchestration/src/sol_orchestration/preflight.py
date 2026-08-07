@@ -237,16 +237,25 @@ def read_effort(entries: list[dict], unreadable: str | None) -> tuple[str | None
     )
 
 
-def current_effort() -> str | None:
-    """Return the effort level in force right now, or ``None`` when unreadable.
+def current_effort_reporting() -> tuple[str | None, Degradation | None]:
+    """Return the effort level in force right now, and why it is absent when it is.
 
     Read at the moment it is asked for. The operator can move the dial mid-session, so
     a level captured earlier and carried forward would record a condition that was not
     actually in force when the spawn happened — which is exactly the confounder the
     episode's effort field exists to remove.
+
+    The degradation is returned rather than discarded because a ``null`` effort with no
+    stated reason is the same defect as a zero cost: it reads, to whoever fits a policy
+    against this corpus later, as a fact rather than as an absence.
     """
     entries, unreadable = _read_transcript_entries(session_transcript_path())
-    level, _ = read_effort(entries, unreadable)
+    return read_effort(entries, unreadable)
+
+
+def current_effort() -> str | None:
+    """Return the effort level in force right now, or ``None`` when unreadable."""
+    level, _ = current_effort_reporting()
     return level
 
 
