@@ -129,7 +129,9 @@ def clears_floor(level: str | None) -> bool:
 
 
 async def resolve_availability(
-    allowlist: tuple[str, ...], host: Host | None = None
+    allowlist: tuple[str, ...],
+    host: Host | None = None,
+    parent_selector: str | None = None,
 ) -> tuple[tuple[str, ...], tuple[DroppedEntry, ...]]:
     """Reduce the declared allowlist to entries reachable under active credentials.
 
@@ -139,13 +141,26 @@ async def resolve_availability(
     a drop reason that was never true.
 
     Args:
+    The parent session's own model is a deliberate exception. The host resolves a
+    spawn against the authenticated-model list **except** when the requested selector
+    equals the parent's, which it returns directly — so that model is always spawnable
+    even when the search omits it. A search-only check would drop the one entry
+    guaranteed to work, which on a subscription-only credential can be the only entry
+    the operator has.
+
+    Args:
         allowlist: The operator's declared entries, in declared order.
         host: The host to query; the injected or live one when omitted.
+        parent_selector: The session's own ``provider/id``; read from the host when
+            omitted. Pass ``""`` to disable the exception entirely.
 
     Returns:
         The surviving entries in declared order, and the dropped ones with reasons.
     """
     host = host or current()
+    if parent_selector is None:
+        parent_selector = await host.parent_selector()
+    parent = (parent_selector or "").lower()
     surviving: list[str] = []
     dropped: list[DroppedEntry] = []
 
@@ -158,6 +173,11 @@ async def resolve_availability(
         # The spawn resolves by exact lowercased provider/id, so availability means an
         # exact match and never a near one: a preview or dated sibling is a different model.
         if any(match.selector.lower() == selector.lower() for match in matches):
+            surviving.append(selector)
+        elif parent and selector.lower() == parent:
+            # Spawnable through the host's parent-model path even though the search
+            # does not list it. Surviving, and not silently: the caller can see that
+            # this delegation would run on the orchestrator's own model.
             surviving.append(selector)
         else:
             dropped.append(

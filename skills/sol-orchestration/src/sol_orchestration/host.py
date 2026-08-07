@@ -114,6 +114,24 @@ class Host:
         """List the direct children the parent session currently retains."""
         raise NotImplementedError
 
+    async def parent_selector(self) -> str | None:
+        """Return the ``provider/id`` this session is itself running on.
+
+        Load-bearing for availability: the host resolves a spawn against the
+        authenticated-model list **except** when the requested selector equals the
+        parent's own, which it returns directly. So the parent's model is always
+        spawnable even when the catalog omits it, and a search-only availability check
+        would drop the one entry that is guaranteed to work.
+        """
+        try:
+            info = await self.request("model.info")
+        except Exception:
+            return None
+        provider, model_id = info.get("provider"), info.get("id")
+        if not provider or not model_id:
+            return None
+        return f"{provider}/{model_id}"
+
     async def spawn(self, prompt: str, *, name: str, selector: str) -> SpawnHandle:
         """Spawn one child on an explicitly routed selector.
 

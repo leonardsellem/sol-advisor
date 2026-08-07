@@ -295,3 +295,78 @@ def test_retention_evidence_says_when_it_was_only_inferred(
     assert report.retention.observed_children == 0
     assert report.retention.retained_children == 0
     assert report.retention.roster_reachable is True
+
+
+# --- the parent's own model is always spawnable -------------------------------
+
+
+def test_the_parents_own_model_survives_even_when_the_search_omits_it(agent_home: Path) -> None:
+    """Proven live: the host spawns the parent's model regardless of the catalog.
+
+        SPAWNED  openai-codex/gpt-5.6-luna  -> sub-22538538   (parent's own model)
+        REFUSED  openai-codex/gpt-5.6-sol   -> unavailable, unauthenticated, or expired
+
+    `_resolveRlmSubagentModel` returns the parent model directly before consulting
+    `_authenticatedRlmModels()`. A search-only availability check drops the one entry
+    guaranteed to work — and on a subscription-only credential that can be the only
+    entry the operator has.
+    """
+    host = RecordingHost(catalog=())          # search reports nothing at all
+    host.parent_model = "provider-sub/model-parent"
+    surviving, dropped = asyncio.run(
+        preflight.resolve_availability(("provider-sub/model-parent",), host)
+    )
+    assert surviving == ("provider-sub/model-parent",)
+    assert dropped == ()
+
+
+def test_a_sibling_model_on_the_same_absent_provider_is_still_dropped(agent_home: Path) -> None:
+    """The exception is the parent's exact selector, not its provider."""
+    host = RecordingHost(catalog=())
+    host.parent_model = "provider-sub/model-parent"
+    surviving, dropped = asyncio.run(
+        preflight.resolve_availability(
+            ("provider-sub/model-parent", "provider-sub/model-sibling"), host
+        )
+    )
+    assert surviving == ("provider-sub/model-parent",)
+    assert [entry.selector for entry in dropped] == ["provider-sub/model-sibling"]
+
+
+def test_the_parent_exception_is_case_insensitive(agent_home: Path) -> None:
+    host = RecordingHost(catalog=())
+    host.parent_model = "Provider-Sub/Model-Parent"
+    surviving, _ = asyncio.run(
+        preflight.resolve_availability(("provider-sub/model-parent",), host)
+    )
+    assert surviving == ("provider-sub/model-parent",)
+
+
+def test_a_searchable_model_still_survives_without_being_the_parent(agent_home: Path) -> None:
+    host = RecordingHost(catalog=("provider-one/searchable",))
+    host.parent_model = "provider-sub/model-parent"
+    surviving, dropped = asyncio.run(
+        preflight.resolve_availability(("provider-one/searchable",), host)
+    )
+    assert surviving == ("provider-one/searchable",)
+    assert dropped == ()
+
+
+def test_an_unreadable_parent_model_does_not_rescue_anything(agent_home: Path) -> None:
+    """model.info failing must not turn every dropped entry into a survivor."""
+    host = RecordingHost(catalog=())
+    host.parent_model = None
+    surviving, dropped = asyncio.run(
+        preflight.resolve_availability(("provider-sub/model-parent",), host)
+    )
+    assert surviving == ()
+    assert len(dropped) == 1
+
+
+def test_the_exception_can_be_disabled_explicitly(agent_home: Path) -> None:
+    host = RecordingHost(catalog=())
+    host.parent_model = "provider-sub/model-parent"
+    surviving, _ = asyncio.run(
+        preflight.resolve_availability(("provider-sub/model-parent",), host, parent_selector="")
+    )
+    assert surviving == ()

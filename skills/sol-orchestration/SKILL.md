@@ -98,8 +98,29 @@ were dropped, or when the runtime is not the version these contracts were verifi
 against. A routine patch bump must not halt the dataset. Every degradation is carried
 in `report.degradations` and belongs in whatever you report afterwards.
 
-Availability is resolved with **one query per declared entry**, never one catalog
-enumeration. Model search is capped at twenty results; on a host with more
+### Your own model is always spawnable — others may not be
+
+The host resolves a spawn against its authenticated-model list **except** when the
+requested selector equals the model you are running on, which it returns directly. So
+your own model is always available as a child, even when the model search does not list
+it. Preflight accounts for that; a search-only check would drop the one entry that is
+guaranteed to work.
+
+That is not a curiosity on a subscription-only credential. Measured on a ChatGPT
+Plus/Pro (Codex) subscription, with the orchestrator running on `gpt-5.6-luna`:
+
+```
+SPAWNED  openai-codex/gpt-5.6-luna  -> sub-22538538      (the parent's own model)
+REFUSED  openai-codex/gpt-5.6-sol   -> unavailable, unauthenticated, or expired
+```
+
+Same provider, same subscription, both listed by `prime-agent model list` — only the
+parent's own model spawns. **On such a credential the cheap tier collapses into the
+orchestrator's own model**, unless you add a provider whose models the search does
+list. Declare it and the episodes will record it; do not assume a cheaper child ran.
+
+Availability is otherwise resolved with **one query per declared entry**, never one
+catalog enumeration. Model search is capped at twenty results; on a host with more
 authenticated models than that, an enumeration silently reports authenticated entries
 as unavailable — measured on this host at 8 of 28 wrongly dropped.
 
