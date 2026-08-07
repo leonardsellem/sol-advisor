@@ -9,10 +9,11 @@ Act as the orchestrator. You own the objective, the decomposition, each child's
 specification, and the acceptance decision. Children own implementation inside the
 boundary you gave them, and nothing else.
 
-Preflight, routing, and the delegation lifecycle are implemented. Evidence capture and
-episodes are not yet — this document carries the whole contract regardless. Everything
-below is runnable by hand today, and the manual procedure is not a fallback of last
-resort: it is the procedure, with the Python call as a convenience on top.
+Preflight, routing, the delegation lifecycle, and evidence collection are implemented.
+Packet assembly and episodes are not yet — this document carries the whole contract
+regardless. Everything below is runnable by hand today, and the manual procedure is
+not a fallback of last resort: it is the procedure, with the Python call as a
+convenience on top.
 
 ## Check the environment first
 
@@ -185,6 +186,85 @@ than reading the child's reply. Deliver a correction with
 `await agent_message.send(text, receiver_role="child", receiver_name=<the child's name>)`,
 and if that raises, treat the child as gone and start a fresh delegation on the same
 model rather than picking a different one.
+
+## Collect evidence in the kernel, for nothing
+
+    snap = evidence.snapshot(repo, declared)          # before the spawn
+    ...
+    result = evidence.collect(repo=repo, snapshot=snap, ownership=spec.ownership,
+                              verification_argv=argv, declared=declared)
+
+Everything it produces is computed in the kernel without a model call. That is not an
+optimisation — if these signals cost a model call, the learning substrate would cost
+more than the routing saves.
+
+**The tamper gate runs before the verification command executes, and this is a
+correctness requirement rather than a preference.** The kernel runs commands with your
+full permissions. A child that edits `conftest.py` and then has the kernel run the
+tests has arranged for its own code to execute next to your credentials. So if the
+delta touches any file the command would load, the command is **never launched** and
+the result is `fix-first` — even when that file is inside the child's declared
+ownership set, because the gate is about execution safety and not about ownership.
+
+The gated set is deliberately conservative: `conftest.py`, `pytest.ini`, `tox.ini`,
+`setup.cfg`, `pyproject.toml`, `setup.py`, `Makefile`, `package.json`, `noxfile.py`,
+`.pre-commit-config.yaml`, `sitecustomize.py`, `usercustomize.py`, anything under the
+repository hooks directory, and any path named literally in the command. A delegation
+whose actual job is to edit one of those is not delegable under this design; do it by
+hand. That is the intended cost.
+
+### Detection is wider than git, on purpose
+
+Every git-derived signal is blind to a write under the Prime Agent home, to
+`.git/hooks/`, or to a credential file — and a hook written to `.git/hooks/pre-commit`
+fires later **under your own hands**, outside any delegation at all. So the package
+config, the episode store size, and the hooks directory are hashed before and after
+every delegation, and a mismatch is an **evidence-integrity failure**, reported
+separately from an ownership violation because it means something different.
+
+A child that commits is caught the same way: committing empties the working tree, so
+a status-based delta would show nothing. The delta is the union of the working-tree
+change set and everything committed since the snapshot, and a moved HEAD is itself an
+integrity failure.
+
+Verification output is scrubbed of environment values and secret-shaped tokens before
+it reaches anything that keeps it, and redaction-occurred is recorded as a degradation.
+
+### What this does not do
+
+**A detected ownership violation is reported, never reverted.** The next delegation
+snapshots the tree as it finds it, so an unreverted foreign change is absorbed into
+the following baseline and stops being visible after one delegation. Deal with it when
+you see it; the package will not silently undo a child's writes.
+
+The ownership set is an attribution and detection device, not an enforcement boundary.
+A child can write outside it. This catches that afterwards.
+
+## The review child reads the code you never will
+
+    findings = await review.request(declared=declared, delegation_id=...,
+                                    changed_paths=result.changed_paths,
+                                    objective=spec.objective)
+
+A fresh child on the **operator-declared review entry** — never an inferred cheapest,
+because the allowlist carries no price field and "cheapest" has no meaning against it.
+It reads the actual changed files, which is the one place in this design a model
+should read code: you are starved by construction, and the context that wrote the spec
+is a weak judge of the result it asked for.
+
+Its findings are **evidence you weigh, never a verdict**. Acceptance stays with you.
+And its read-only posture is a prompt, not enforced isolation — the package reports it
+as `prompt-constrained` and you should describe it the same way. A review child that
+never reports degrades to a packet without findings rather than blocking the
+delegation.
+
+### Doing this by hand
+
+Take `git status --porcelain -uall` and `git rev-parse HEAD` before the spawn and
+again after, and compare. Check whether anything in the gated list above changed
+**before** you run the verification command; if it did, stop and treat it as
+`fix-first` without running anything. Check `.git/hooks/` and your Prime Agent config
+by hand too — nothing in `git status` will show you either.
 
 ## The delegation contract
 
