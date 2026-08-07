@@ -35,6 +35,10 @@ from .contract import Degradation
 
 LEDGER_FILE_NAME = "ledger.jsonl"
 
+#: Degradations observed at open time, carried on the open record until the close
+#: merges them. Stripped before the record is written.
+PENDING_DEGRADATIONS_KEY = "_pending_degradations"
+
 #: Distinguishes "the caller passed no effort" from "the caller passed None".
 _MISSING = object()
 
@@ -85,6 +89,7 @@ class Ledger:
         if record.get("schema_version") == episodes_module.SCHEMA_VERSION:
             return record
 
+        pending: list[dict[str, str]] = []
         effort = record.get("effort_at_spawn", _MISSING)
         if effort is _MISSING:
             # Read now rather than earlier. The operator can move the dial mid-session,
@@ -92,9 +97,13 @@ class Ledger:
             # in force at the spawn — the exact confounder this field exists to remove.
             from . import preflight
 
-            effort = preflight.current_effort()
+            effort, degradation = preflight.current_effort_reporting()
+            if degradation is not None:
+                # Carried to the close so the record says *why* the effort is absent. A
+                # null with no stated reason reads as a fact rather than as an absence.
+                pending.append(degradation.as_dict())
 
-        return episodes_module.open_record(
+        opened = episodes_module.open_record(
             delegation_id=record.get("delegation_id") or delegation_id,
             selector=record.get("selector") or "",
             surviving_size=int(
@@ -107,6 +116,9 @@ class Ledger:
             child_name=record.get("child_name") or "",
             restarted_from=record.get("restarted_from"),
         )
+        if pending:
+            opened[PENDING_DEGRADATIONS_KEY] = pending
+        return opened
 
     def close(self, delegation_id: str, outcome: str, detail: dict[str, Any]) -> None:
         """Append exactly one episode for this delegation, and close it in the ledger.
@@ -128,14 +140,16 @@ class Ledger:
             )
 
         entry = state[delegation_id]
+        opened_record = dict(entry.record)
+        carried = opened_record.pop(PENDING_DEGRADATIONS_KEY, [])
         degradations = tuple(
             Degradation(kind=item["kind"], detail=item.get("detail", ""))
-            for item in detail.get("degradations", ())
+            for item in list(carried) + list(detail.get("degradations", ()))
             if isinstance(item, dict) and "kind" in item
         )
 
         record = episodes_module.close_record(
-            opened=entry.record,
+            opened=opened_record,
             outcome=outcome,
             rounds=tuple(entry.rounds),
             child_effort_clamped=detail.get("child_effort_clamped"),
