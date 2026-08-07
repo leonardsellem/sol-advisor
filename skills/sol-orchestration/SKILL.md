@@ -9,11 +9,11 @@ Act as the orchestrator. You own the objective, the decomposition, each child's
 specification, and the acceptance decision. Children own implementation inside the
 boundary you gave them, and nothing else.
 
-This is the package skeleton. Routing, delegation transport, evidence capture, and
-episodes are not implemented here — the Python module reports the environment and
-this document carries the contract. Everything below is runnable by hand today, and
-the manual procedure is not a fallback of last resort: it is the procedure, with the
-Python call as a convenience on top.
+Preflight and routing are implemented. Delegation transport, evidence capture, and
+episodes are not yet — this document carries the whole contract regardless.
+Everything below is runnable by hand today, and the manual procedure is not a
+fallback of last resort: it is the procedure, with the Python call as a convenience
+on top.
 
 ## Check the environment first
 
@@ -42,6 +42,87 @@ Both are **degradations, not failures** — say so out loud and keep going:
 
 If the module loads but the runtime does not, `run()` says `runtime: degraded` and
 names the import error rather than raising. Same three steps.
+
+## Declare the allowlist before anything else
+
+This package ships **no default allowlist and no default model**, anywhere. A default
+would reintroduce a hardcoded model choice by being the value nobody ever edits. Every
+model name in the system comes from one operator-owned file:
+
+    <PRIME_AGENT_CODING_AGENT_DIR or ~/.prime/agent>/sol-orchestration/config.json
+
+```json
+{
+  "allowlist": ["provider-a/model-one", "provider-a/model-two"],
+  "review_model": "provider-a/model-two",
+  "verification_commands": { "unit": ["python", "-m", "pytest", "-q"] },
+  "routing_prior": {
+    "default": "provider-a/model-one",
+    "rules": [{ "domain": "python", "difficulty": "hard", "model": "provider-a/model-two" }]
+  }
+}
+```
+
+Every entry must be a full `provider/model` selector, because the spawn resolves an
+exact `provider/id` match and a bare id can never resolve. `review_model` and every
+model named in `routing_prior` must appear in the allowlist. A rule may use `"*"` as
+its difficulty to match every difficulty in a domain; rules are tried in declared
+order, so the operator controls precedence.
+
+Removing this package is a delete of that directory. Nothing is written to Prime
+Agent's own settings.
+
+## Run preflight before every delegation
+
+    report = await sol_orchestration.preflight.run()
+
+It costs nothing. Model search resolves against credentials before any inference, and
+the rest is file reads and read-only host requests. It either returns the surviving
+allowlist or raises a refusal naming the artifact to change and the fix.
+
+It **refuses** when:
+
+- The config file is absent, malformed, or internally inconsistent.
+- No declared entry survives the availability check. It never falls back to the
+  session's own model — that model is the expensive orchestrator.
+- The session's reasoning effort is below `high`. Nothing in the kernel can change
+  the level, so it asks you to raise it with `/effort high` rather than pretending to.
+- This session's children would not be retained. Only a retained child can receive a
+  correction, so a session whose children carry no active session id is refused now
+  rather than at correction time, after the child has been paid for.
+- The agent-message or agent-observe host requests are unreachable. Correction
+  delivery and child observation both route through them.
+
+It **degrades and continues** when the effort level cannot be read, when some entries
+were dropped, or when the runtime is not the version these contracts were verified
+against. A routine patch bump must not halt the dataset. Every degradation is carried
+in `report.degradations` and belongs in whatever you report afterwards.
+
+Availability is resolved with **one query per declared entry**, never one catalog
+enumeration. Model search is capped at twenty results; on a host with more
+authenticated models than that, an enumeration silently reports authenticated entries
+as unavailable — measured on this host at 8 of 28 wrongly dropped.
+
+## Route each delegation
+
+    decision = sol_orchestration.routing.select(
+        domain=spec.domain, difficulty=spec.difficulty,
+        prior=report.config.prior, surviving=report.surviving,
+    )
+
+Selection is a pure function of the declared features and the surviving set. A rule
+naming a model that did not survive falls through to the next applicable rule; a
+domain with no match takes the declared default; a spec missing a domain or a
+difficulty is rejected rather than routed on a guess. `decision.surviving_size`
+records how many candidates the choice was made from — choosing among four is not the
+same event as choosing among one.
+
+### Doing this by hand
+
+With no Python: read the config file yourself, run `prime-agent model list` and drop
+every declared entry that does not appear in it verbatim, confirm `/effort` is at
+`high` or above, then apply the prior's rules in order against what survived. Refuse
+in exactly the cases listed above rather than substituting a model.
 
 ## The delegation contract
 
