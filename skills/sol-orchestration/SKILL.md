@@ -166,6 +166,12 @@ answer, so a delegation spans at least two of your turns with a ledger between t
     # your turn ends here; the child runs detached
     collection = await engine.collect(delegation, bound_seconds=900)
 
+A host notification that the child **"completed without sending a reply"** is the
+expected wake-up for the next line, not a missing handoff: call `collect` immediately
+for that delegation. Do not wait for a prose handoff, ask the child to reply, declare
+all agents idle, or end the objective before collection. Only the signal file can
+advance the lifecycle; the notification merely tells you when to look.
+
 Inside `dispatch` the order is fixed and it is a correctness requirement, not a
 style: **snapshot the tree, open the episode record, then spawn.** A record opened
 after the handle returns loses every spawn that raises — and a spawn that fails after
@@ -197,6 +203,10 @@ closed as `abandon`, with its record written and a timeout degradation recorded.
 ## Corrections go to the same child, or restart on the same model
 
     result = await engine.correct(delegation, "the retry count is off by one")
+
+`correct` clears the prior round's signal before it sends or restarts. Without that
+state transition, a later `collect` on the retained child would read the stale done
+file and return before the correction ran.
 
 A correction can only reach a child that is still retained and addressable. When the
 child is gone, the correction opens a **new linked delegation id on the same model**,

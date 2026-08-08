@@ -73,6 +73,14 @@ def test_no_module_level_import_of_the_kernel_runtime() -> None:
             )
 
 
+def test_the_skill_treats_no_reply_completion_as_the_collect_wakeup() -> None:
+    """The host notification is a wake-up, not a prose handoff to wait for."""
+    skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    assert "completed without sending a reply" in skill
+    assert "call `collect` immediately" in skill
+    assert "Do not wait for a prose handoff" in skill
+
+
 def test_manual_recovery_is_honest_about_the_missing_episode_and_host_bridge() -> None:
     """Raw spawning cannot impersonate the package lifecycle that the trace bypassed."""
     skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")

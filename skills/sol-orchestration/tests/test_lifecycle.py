@@ -214,6 +214,31 @@ def test_a_correction_to_a_live_retained_child_reaches_it_by_name(declared: conf
     assert delegation.correction_count == 1
 
 
+def test_a_direct_correction_clears_the_prior_completion_signal_before_delivery(
+    declared: config.Config,
+) -> None:
+    """A stale done file must not make the next collect return before round two runs."""
+    host = RecordingHost()
+    engine, host, _, _, _ = build(declared, host=host)
+    delegation = asyncio.run(engine.dispatch(a_spec(), selector=ROUTED, surviving=SURVIVING))
+    spec_module.write_signal(delegation.delegation_id, {"status": "done", "summary": "round one"})
+    send_message = host.send_message
+
+    async def require_clear_before_delivery(*args, **kwargs) -> None:
+        assert not spec_module.signal_path(delegation.delegation_id).exists()
+        await send_message(*args, **kwargs)
+
+    host.send_message = require_clear_before_delivery  # type: ignore[method-assign]
+    result = asyncio.run(engine.correct(delegation, "the retry count is off by one"))
+
+    assert result.delivered is True
+    assert not spec_module.signal_path(delegation.delegation_id).exists()
+    spec_module.write_signal(delegation.delegation_id, {"status": "done", "summary": "round two"})
+    collection = asyncio.run(engine.collect(delegation, bound_seconds=60))
+    assert collection.signal is not None
+    assert collection.signal["summary"] == "round two"
+
+
 def test_an_unreachable_message_channel_restarts_on_the_same_model(
     declared: config.Config,
 ) -> None:

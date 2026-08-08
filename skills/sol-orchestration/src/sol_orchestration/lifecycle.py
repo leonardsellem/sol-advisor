@@ -321,6 +321,12 @@ class Lifecycle:
         if delegation.correction_count >= FIX_FIRST_CAP:
             return CorrectionResult(delivered=False, restarted=False, forced_rethink=True)
 
+        # Collection leaves the completed round's signal in place until terminal close.
+        # A correction reuses the delegation id when the child is retained, so that old
+        # file would make the next collect return immediately before the child ran the
+        # correction. Clear it as a lifecycle transition, not as an orchestrator chore.
+        spec_module.clear_signal(delegation.delegation_id)
+
         restart_reason = "the child is not retained or addressable"
         if await self._child_is_addressable(delegation):
             try:
